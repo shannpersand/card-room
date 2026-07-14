@@ -31,8 +31,12 @@ CREATE TABLE IF NOT EXISTS public.players (
   seat_order  integer NOT NULL,
   is_standing boolean NOT NULL DEFAULT false,
   is_active   boolean NOT NULL DEFAULT true,
+  is_bot      boolean NOT NULL DEFAULT false,
   last_seen   timestamptz DEFAULT now()
 );
+
+-- Migration for existing installs (safe to re-run)
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS is_bot boolean NOT NULL DEFAULT false;
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_rooms_code ON public.rooms(code);

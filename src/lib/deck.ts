@@ -1,7 +1,7 @@
 import type { Card, Suit, Rank } from '@/types';
 
 const SUITS: Suit[] = ['spades', 'hearts', 'diamonds', 'clubs'];
-const RANKS: Rank[] = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+export const RANKS: Rank[] = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 
 export function createDeck(): Card[] {
   return SUITS.flatMap(suit =>
@@ -26,6 +26,19 @@ export const RANK_VALUES: Record<Rank, number> = {
 export const SUIT_SYMBOLS: Record<Suit, string> = {
   spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣',
 };
+
+/** Blackjack hand value, with Aces counting as 11 unless that would bust the hand. */
+export function blackjackValue(hand: Card[]): number {
+  let total = 0;
+  let aces = 0;
+  for (const card of hand) {
+    if (card.rank === 'A') { total += 11; aces++; }
+    else if (card.rank === 'K' || card.rank === 'Q' || card.rank === 'J' || card.rank === '10') total += 10;
+    else total += Number(card.rank);
+  }
+  while (total > 21 && aces > 0) { total -= 10; aces--; }
+  return total;
+}
 
 /** Generate a random 4-character room code using unambiguous characters */
 export function generateRoomCode(): string {

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
+import { supabase, getErrorMessage } from '@/lib/supabase';
 import { generateRoomCode } from '@/lib/deck';
 
 export function Landing() {
@@ -46,7 +46,51 @@ export function Landing() {
       localStorage.setItem('cardroom_room_code', code);
       navigate(`/lobby/${code}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong');
+      setError(getErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startTestGame() {
+    if (!savedName) return setError('Enter your name first');
+    setLoading(true);
+    setError('');
+    try {
+      let code = '';
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const candidate = generateRoomCode();
+        const { data } = await supabase.from('rooms').select('id').eq('code', candidate).maybeSingle();
+        if (!data) { code = candidate; break; }
+      }
+      if (!code) throw new Error('Could not generate a unique room code. Try again.');
+
+      const { data: room, error: roomErr } = await supabase
+        .from('rooms')
+        .insert({ code })
+        .select()
+        .single();
+      if (roomErr) throw roomErr;
+
+      const { data: player, error: playerErr } = await supabase
+        .from('players')
+        .insert({ room_id: room.id, name: savedName, seat_order: 0 })
+        .select()
+        .single();
+      if (playerErr) throw playerErr;
+
+      const { error: botsErr } = await supabase.from('players').insert([
+        { room_id: room.id, name: 'Computer 1', seat_order: 1, is_bot: true },
+        { room_id: room.id, name: 'Computer 2', seat_order: 2, is_bot: true },
+      ]);
+      if (botsErr) throw botsErr;
+
+      localStorage.setItem('cardroom_name', savedName);
+      localStorage.setItem('cardroom_player_id', player.id);
+      localStorage.setItem('cardroom_room_code', code);
+      navigate(`/lobby/${code}`);
+    } catch (e) {
+      setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -106,7 +150,7 @@ export function Landing() {
       localStorage.setItem('cardroom_room_code', code);
       navigate(`/lobby/${code}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong');
+      setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -149,6 +193,13 @@ export function Landing() {
             className="w-full bg-white/10 hover:bg-white/20 text-white font-semibold py-4 rounded-xl text-lg transition-colors"
           >
             Join a Game
+          </button>
+          <button
+            onClick={startTestGame}
+            disabled={loading || !savedName}
+            className="w-full bg-transparent border border-dashed border-white/20 hover:border-white/40 disabled:opacity-50 disabled:cursor-not-allowed text-white/60 hover:text-white font-semibold py-3 rounded-xl text-sm transition-colors"
+          >
+            {loading ? 'Setting up…' : 'Start Test Game (vs Computer)'}
           </button>
         </div>
       ) : (

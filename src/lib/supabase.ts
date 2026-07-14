@@ -8,3 +8,15 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+/**
+ * Supabase/Postgrest errors are plain objects, not `Error` instances — `e instanceof Error`
+ * silently fails for them and hides the real message. Use this in catch blocks instead.
+ */
+export function getErrorMessage(e: unknown, fallback = 'Something went wrong'): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string') {
+    return (e as { message: string }).message;
+  }
+  return fallback;
+}

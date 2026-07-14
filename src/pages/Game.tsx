@@ -1,10 +1,10 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { resolveGame } from '@/lib/games';
-import { nextPlayerInOrder } from '@/lib/deck';
+import { nextPlayerInOrder, blackjackValue, RANKS } from '@/lib/deck';
 import { PlayingCard } from '@/components/PlayingCard';
-import type { Room, Player, HoldemStage, Rank } from '@/types';
+import type { Room, Player, Card, HoldemStage, Rank } from '@/types';
 
 export function Game() {
   const { code } = useParams<{ code: string }>();
@@ -66,6 +66,129 @@ export function Game() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [room?.id]);
+
+  // --- Computer opponents ---
+  // A single browser tab (whoever has this room open) drives bot turns. Bots reuse the same
+  // lenient, unvalidated state transitions the human action functions below use — this app
+  // doesn't enforce game-specific rules server-side, so bots don't need to "know the rules"
+  // beyond making a legal-shaped move.
+  const botActingRef = useRef(false);
+
+  async function performBotTurn(bot: Player) {
+    if (!room) return;
+    const { data: freshRoomData } = await supabase.from('rooms').select('*').eq('id', room.id).single();
+    const { data: freshBotData } = await supabase.from('players').select('*').eq('id', bot.id).single();
+    if (!freshRoomData || !freshBotData) return;
+    const freshRoom = freshRoomData as Room;
+    let hand = (freshBotData as Player).hand;
+
+    if (game?.showBlackjackControls) {
+      let deck = freshRoom.deck;
+      while (blackjackValue(hand) < 17 && deck.length > 0) {
+        const [drawn, ...rest] = deck;
+        deck = rest;
+        hand = [...hand, { ...drawn, faceUp: true }];
+        await Promise.all([
+          supabase.from('rooms').update({ deck }).eq('id', room.id),
+          supabase.from('players').update({ hand }).eq('id', bot.id),
+        ]);
+      }
+      const nextTurn = nextPlayerInOrder(orderedPlayers, bot.id);
+      await Promise.all([
+        supabase.from('players').update({ is_standing: true }).eq('id', bot.id),
+        supabase.from('rooms').update({ current_turn: nextTurn }).eq('id', room.id),
+      ]);
+      return;
+    }
+
+    if (game?.isGoFishLike) {
+      const others = orderedPlayers.filter(p => p.id !== bot.id);
+      // Cap successful-ask chains so a lucky bot can't hold the turn forever.
+      for (let asks = 0; asks < 8 && others.length > 0; asks++) {
+        const target = others[Math.floor(Math.random() * others.length)];
+        const ranksInHand = [...new Set(hand.map(c => c.rank))];
+        const askRank: Rank = ranksInHand.length > 0
+          ? ranksInHand[Math.floor(Math.random() * ranksInHand.length)]
+          : RANKS[Math.floor(Math.random() * RANKS.length)];
+
+        const { data: freshTargetData } = await supabase.from('players').select('*').eq('id', target.id).single();
+        const targetHand: Card[] = (freshTargetData as Player | null)?.hand ?? [];
+        const matching = targetHand.filter(c => c.rank === askRank);
+
+        if (matching.length === 0) {
+          const { data: currentRoomData } = await supabase.from('rooms').select('deck').eq('id', room.id).single();
+          const deck: Card[] = (currentRoomData as Room | null)?.deck ?? [];
+          if (deck.length > 0) {
+            const [drawn, ...remainingDeck] = deck;
+            hand = [...hand, drawn];
+            await Promise.all([
+              supabase.from('rooms').update({ deck: remainingDeck }).eq('id', room.id),
+              supabase.from('players').update({ hand }).eq('id', bot.id),
+            ]);
+          }
+          break;
+        }
+
+        hand = [...hand, ...matching];
+        const newTargetHand = targetHand.filter(c => c.rank !== askRank);
+        await Promise.all([
+          supabase.from('players').update({ hand }).eq('id', bot.id),
+          supabase.from('players').update({ hand: newTargetHand }).eq('id', target.id),
+        ]);
+        // Successful ask — bot goes again, matching Go Fish rules.
+      }
+      const nextTurn = nextPlayerInOrder(orderedPlayers, bot.id);
+      await supabase.from('rooms').update({ current_turn: nextTurn }).eq('id', room.id);
+      return;
+    }
+
+    // Generic turn-based mode (Rummy-style draw/discard, Crazy Eights, and AI-designed games).
+    let deck = freshRoom.deck;
+    let discardPile = freshRoom.discard_pile;
+    if (game?.canDrawFromDiscard && discardPile.length > 0) {
+      const drawn = discardPile[discardPile.length - 1];
+      discardPile = discardPile.slice(0, -1);
+      hand = [...hand, { ...drawn, faceUp: true }];
+    } else if (deck.length > 0) {
+      const [drawn, ...rest] = deck;
+      deck = rest;
+      hand = [...hand, drawn];
+    }
+
+    let communityCards = freshRoom.community_cards;
+    if (hand.length > 0) {
+      const [toPlay, ...remainingHand] = hand;
+      hand = remainingHand;
+      const played = { ...toPlay, faceUp: true };
+      if (game?.canDrawFromDiscard) discardPile = [...discardPile, played];
+      else communityCards = [...communityCards, played];
+    }
+
+    const nextTurn = nextPlayerInOrder(orderedPlayers, bot.id);
+    await Promise.all([
+      supabase.from('players').update({ hand }).eq('id', bot.id),
+      supabase.from('rooms').update({
+        deck, discard_pile: discardPile, community_cards: communityCards, current_turn: nextTurn,
+      }).eq('id', room.id),
+    ]);
+  }
+
+  useEffect(() => {
+    if (!room || !game?.turnBased || !room.current_turn) return;
+    const turnPlayer = orderedPlayers.find(p => p.id === room.current_turn);
+    if (!turnPlayer?.is_bot || botActingRef.current) return;
+
+    const timeout = setTimeout(async () => {
+      botActingRef.current = true;
+      try {
+        await performBotTurn(turnPlayer);
+      } finally {
+        botActingRef.current = false;
+      }
+    }, 1200);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.current_turn, room?.id, game?.turnBased]);
 
   // --- Actions ---
 

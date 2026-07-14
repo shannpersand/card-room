@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
+import { supabase, getErrorMessage } from '@/lib/supabase';
 import { getGame, GAMES, dealFromGeneratedConfig, type GameConfig } from '@/lib/games';
 import type { Room, Player, GeneratedGameConfig } from '@/types';
 
@@ -90,7 +90,7 @@ export function Lobby() {
       setDraftConfig(data as GeneratedGameConfig);
       setClarifyingAnswers({});
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to design game. Try again, or pick a preset instead.');
+      setError(getErrorMessage(e, 'Failed to design game. Try again, or pick a preset instead.'));
     } finally {
       setDesigning(false);
     }
@@ -166,7 +166,7 @@ export function Lobby() {
         custom_game: mode === 'custom' ? (game as GeneratedGameConfig) : null,
       }).eq('id', room.id);
     } catch (e) {
-      setError('Failed to start game. Please try again.');
+      setError(getErrorMessage(e, 'Failed to start game. Please try again.'));
     } finally {
       setDealing(false);
     }

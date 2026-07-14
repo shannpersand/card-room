@@ -16,6 +16,7 @@ export interface Player {
   seat_order: number;
   is_standing: boolean; // Blackjack: has this player chosen to stand?
   is_active: boolean;
+  is_bot: boolean;
   last_seen: string;
 }
 
