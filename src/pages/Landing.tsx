@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, getErrorMessage } from '@/lib/supabase';
 import { generateRoomCode } from '@/lib/deck';
+import { generateFunName } from '@/lib/names';
 
 export function Landing() {
   const navigate = useNavigate();
@@ -14,7 +15,8 @@ export function Landing() {
   const savedName = name.trim();
 
   async function createRoom() {
-    if (!savedName) return setError('Enter your name first');
+    const playerName = savedName || generateFunName();
+    if (!savedName) setName(playerName);
     setLoading(true);
     setError('');
     try {
@@ -36,12 +38,12 @@ export function Landing() {
 
       const { data: player, error: playerErr } = await supabase
         .from('players')
-        .insert({ room_id: room.id, name: savedName, seat_order: 0 })
+        .insert({ room_id: room.id, name: playerName, seat_order: 0 })
         .select()
         .single();
       if (playerErr) throw playerErr;
 
-      localStorage.setItem('cardroom_name', savedName);
+      localStorage.setItem('cardroom_name', playerName);
       localStorage.setItem('cardroom_player_id', player.id);
       localStorage.setItem('cardroom_room_code', code);
       navigate(`/lobby/${code}`);
@@ -53,7 +55,8 @@ export function Landing() {
   }
 
   async function startTestGame() {
-    if (!savedName) return setError('Enter your name first');
+    const playerName = savedName || generateFunName();
+    if (!savedName) setName(playerName);
     setLoading(true);
     setError('');
     try {
@@ -74,7 +77,7 @@ export function Landing() {
 
       const { data: player, error: playerErr } = await supabase
         .from('players')
-        .insert({ room_id: room.id, name: savedName, seat_order: 0 })
+        .insert({ room_id: room.id, name: playerName, seat_order: 0 })
         .select()
         .single();
       if (playerErr) throw playerErr;
@@ -85,7 +88,7 @@ export function Landing() {
       ]);
       if (botsErr) throw botsErr;
 
-      localStorage.setItem('cardroom_name', savedName);
+      localStorage.setItem('cardroom_name', playerName);
       localStorage.setItem('cardroom_player_id', player.id);
       localStorage.setItem('cardroom_room_code', code);
       navigate(`/lobby/${code}`);
@@ -97,7 +100,8 @@ export function Landing() {
   }
 
   async function joinRoom() {
-    if (!savedName) return setError('Enter your name first');
+    const playerName = savedName || generateFunName();
+    if (!savedName) setName(playerName);
     const code = joinCode.trim().toUpperCase();
     if (code.length !== 4) return setError('Room code must be 4 characters');
     setLoading(true);
@@ -123,7 +127,7 @@ export function Landing() {
           .maybeSingle();
         if (existing) {
           await supabase.from('players').update({ is_active: true, last_seen: new Date().toISOString() }).eq('id', existing.id);
-          localStorage.setItem('cardroom_name', savedName);
+          localStorage.setItem('cardroom_name', playerName);
           navigate(`/lobby/${code}`);
           return;
         }
@@ -140,12 +144,12 @@ export function Landing() {
 
       const { data: player, error: playerErr } = await supabase
         .from('players')
-        .insert({ room_id: room.id, name: savedName, seat_order: nextSeat })
+        .insert({ room_id: room.id, name: playerName, seat_order: nextSeat })
         .select()
         .single();
       if (playerErr) throw playerErr;
 
-      localStorage.setItem('cardroom_name', savedName);
+      localStorage.setItem('cardroom_name', playerName);
       localStorage.setItem('cardroom_player_id', player.id);
       localStorage.setItem('cardroom_room_code', code);
       navigate(`/lobby/${code}`);
@@ -170,7 +174,7 @@ export function Landing() {
         <label className="block text-sm text-emerald-300 mb-1 font-medium">Your name</label>
         <input
           className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-emerald-400 text-lg"
-          placeholder="Enter your name…"
+          placeholder="Enter your name… (or leave blank for a random one)"
           value={name}
           maxLength={20}
           onChange={e => setName(e.target.value)}
@@ -183,7 +187,7 @@ export function Landing() {
         <div className="w-full max-w-sm flex flex-col gap-3">
           <button
             onClick={createRoom}
-            disabled={loading || !savedName}
+            disabled={loading}
             className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg transition-colors"
           >
             {loading ? 'Creating…' : 'Create Game'}
@@ -196,7 +200,7 @@ export function Landing() {
           </button>
           <button
             onClick={startTestGame}
-            disabled={loading || !savedName}
+            disabled={loading}
             className="w-full bg-transparent border border-dashed border-white/20 hover:border-white/40 disabled:opacity-50 disabled:cursor-not-allowed text-white/60 hover:text-white font-semibold py-3 rounded-xl text-sm transition-colors"
           >
             {loading ? 'Setting up…' : 'Start Test Game (vs Computer)'}
@@ -218,7 +222,7 @@ export function Landing() {
           </div>
           <button
             onClick={joinRoom}
-            disabled={loading || !savedName || joinCode.length !== 4}
+            disabled={loading || joinCode.length !== 4}
             className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl text-lg transition-colors"
           >
             {loading ? 'Joining…' : 'Join Room'}
