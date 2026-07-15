@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { supabase, getErrorMessage } from '@/lib/supabase';
-import { getGame, GAMES, dealFromGeneratedConfig, type GameConfig } from '@/lib/games';
-import type { Room, Player, GeneratedGameConfig } from '@/types';
+import { supabase, getErrorMessage, getEdgeFunctionErrorMessage } from '@/lib/supabase';
+import { getGame, GAMES, dealGame, type GameConfig } from '@/lib/games';
+import type { Room, Player, GeneratedGameConfig, SavedGame } from '@/types';
 
 export function Lobby() {
   const { code } = useParams<{ code: string }>();
@@ -13,11 +13,14 @@ export function Lobby() {
   const [loading, setLoading] = useState(true);
   const [dealing, setDealing] = useState(false);
   const [error, setError] = useState('');
-  const [mode, setMode] = useState<'preset' | 'custom'>('preset');
+  const [mode, setMode] = useState<'preset' | 'custom' | 'saved'>('preset');
   const [gamePrompt, setGamePrompt] = useState('');
   const [designing, setDesigning] = useState(false);
   const [draftConfig, setDraftConfig] = useState<GeneratedGameConfig | null>(null);
   const [clarifyingAnswers, setClarifyingAnswers] = useState<Record<string, string>>({});
+  const [savedGames, setSavedGames] = useState<SavedGame[]>([]);
+  const [savedGamesLoading, setSavedGamesLoading] = useState(false);
+  const [selectedSavedId, setSelectedSavedId] = useState('');
 
   const myPlayerId = localStorage.getItem('cardroom_player_id');
 
@@ -85,7 +88,9 @@ export function Lobby() {
       const { data, error: fnError } = await supabase.functions.invoke('design-game', {
         body: { prompt, playerCount: activePlayersOrdered.length },
       });
-      if (fnError) throw fnError;
+      if (fnError) {
+        throw new Error(await getEdgeFunctionErrorMessage(fnError, 'Failed to design game. Try again, or pick a preset instead.'));
+      }
       if (data?.error) throw new Error(data.error);
       setDraftConfig(data as GeneratedGameConfig);
       setClarifyingAnswers({});
@@ -93,6 +98,25 @@ export function Lobby() {
       setError(getErrorMessage(e, 'Failed to design game. Try again, or pick a preset instead.'));
     } finally {
       setDesigning(false);
+    }
+  }
+
+  async function switchToSavedMode() {
+    setMode('saved');
+    setError('');
+    if (savedGames.length > 0) return;
+    setSavedGamesLoading(true);
+    try {
+      const { data, error: fetchErr } = await supabase
+        .from('saved_games').select('*').order('created_at', { ascending: false });
+      if (fetchErr) throw fetchErr;
+      const loaded = (data as SavedGame[]) ?? [];
+      setSavedGames(loaded);
+      setSelectedSavedId(loaded[0]?.id ?? '');
+    } catch (e) {
+      setError(getErrorMessage(e, 'Failed to load saved games.'));
+    } finally {
+      setSavedGamesLoading(false);
     }
   }
 
@@ -124,9 +148,9 @@ export function Lobby() {
   async function startGame() {
     if (!room || !isDealer) return;
     const game: GameConfig | GeneratedGameConfig | undefined =
-      mode === 'custom' ? draftConfig ?? undefined : getGame(selectedGameId);
+      mode !== 'preset' ? draftConfig ?? undefined : getGame(selectedGameId);
     if (!game) return;
-    if (mode === 'custom' && draftConfig && draftConfig.clarifyingOptions.length > 0) return;
+    if (mode !== 'preset' && draftConfig && draftConfig.clarifyingOptions.length > 0) return;
 
     if (activePlayersOrdered.length < game.minPlayers) {
       return setError(`${game.name} needs at least ${game.minPlayers} players.`);
@@ -138,33 +162,7 @@ export function Lobby() {
     setDealing(true);
     setError('');
     try {
-      const { hands, communityCards, discardPile, remainingDeck } =
-        mode === 'custom'
-          ? dealFromGeneratedConfig(game as GeneratedGameConfig, activePlayersOrdered.length)
-          : (game as GameConfig).deal(activePlayersOrdered.length);
-      const firstTurnId = game.turnBased
-        ? activePlayersOrdered[game.showBlackjackControls ? 1 : 0]?.id ?? null
-        : null;
-
-      // Update each player's hand
-      for (let i = 0; i < activePlayersOrdered.length; i++) {
-        await supabase.from('players')
-          .update({ hand: hands[i], is_standing: false })
-          .eq('id', activePlayersOrdered[i].id);
-      }
-
-      // Update room state to playing
-      await supabase.from('rooms').update({
-        game_id: mode === 'custom' ? 'custom' : (game as GameConfig).id,
-        game_name: game.name,
-        state: 'playing',
-        deck: remainingDeck,
-        community_cards: communityCards,
-        discard_pile: discardPile,
-        current_turn: firstTurnId,
-        holdem_stage: game.showHoldemControls ? 'preflop' : null,
-        custom_game: mode === 'custom' ? (game as GeneratedGameConfig) : null,
-      }).eq('id', room.id);
+      await dealGame(room, game, activePlayersOrdered);
     } catch (e) {
       setError(getErrorMessage(e, 'Failed to start game. Please try again.'));
     } finally {
@@ -253,6 +251,13 @@ export function Lobby() {
             >
               Describe a game
             </button>
+            <button
+              onClick={switchToSavedMode}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors
+                ${mode === 'saved' ? 'bg-emerald-600 text-white' : 'text-white/50 hover:text-white'}`}
+            >
+              Saved Games
+            </button>
           </div>
 
           {mode === 'preset' ? (
@@ -277,6 +282,53 @@ export function Lobby() {
                 <p className="text-white/50 text-xs">{getGame(selectedGameId)?.instructions}</p>
               </div>
             </>
+          ) : mode === 'saved' ? (
+            !draftConfig ? (
+              <div>
+                <label className="block text-sm text-emerald-300 mb-2 font-medium">Pick a saved game</label>
+                {savedGamesLoading ? (
+                  <p className="text-white/40 text-sm">Loading…</p>
+                ) : savedGames.length === 0 ? (
+                  <p className="text-white/40 text-sm">
+                    No saved games yet. Save one from the settings panel during a game, then it'll show up here.
+                  </p>
+                ) : (
+                  <>
+                    <select
+                      value={selectedSavedId}
+                      onChange={e => setSelectedSavedId(e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-emerald-400 text-base appearance-none"
+                    >
+                      {savedGames.map(sg => (
+                        <option key={sg.id} value={sg.id} className="bg-emerald-950 text-white">{sg.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => {
+                        const chosen = savedGames.find(sg => sg.id === selectedSavedId) ?? savedGames[0];
+                        if (chosen) setDraftConfig(chosen.config);
+                      }}
+                      className="w-full mt-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl transition-colors"
+                    >
+                      Load
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                  <p className="text-white font-semibold mb-1">{draftConfig.name}</p>
+                  <p className="text-white/50 text-xs">{draftConfig.instructions}</p>
+                </div>
+                <button
+                  onClick={() => setDraftConfig(null)}
+                  className="text-white/40 hover:text-white text-xs self-start"
+                >
+                  ← Choose a different saved game
+                </button>
+              </div>
+            )
           ) : !draftConfig ? (
             <div>
               <label className="block text-sm text-emerald-300 mb-2 font-medium">What do you want to play?</label>
@@ -351,7 +403,7 @@ export function Lobby() {
 
           <button
             onClick={startGame}
-            disabled={dealing || activePlayersOrdered.length < 2 || (mode === 'custom' && (!draftConfig || draftConfig.clarifyingOptions.length > 0))}
+            disabled={dealing || activePlayersOrdered.length < 2 || (mode !== 'preset' && (!draftConfig || draftConfig.clarifyingOptions.length > 0))}
             className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-amber-950 font-bold py-4 rounded-xl text-lg transition-colors"
           >
             {dealing ? 'Dealing cards…' : 'Deal Cards'}

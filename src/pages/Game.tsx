@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
-import { resolveGame } from '@/lib/games';
+import { supabase, getErrorMessage, getEdgeFunctionErrorMessage } from '@/lib/supabase';
+import { resolveGame, dealGame, toEditableConfig } from '@/lib/games';
 import { nextPlayerInOrder, blackjackValue, RANKS } from '@/lib/deck';
 import { PlayingCard } from '@/components/PlayingCard';
-import type { Room, Player, Card, HoldemStage, Rank } from '@/types';
+import type { Room, Player, Card, HoldemStage, Rank, GeneratedGameConfig, DealPlan } from '@/types';
+
+type PendingMode = 'freeplay' | 'blackjack' | 'holdem' | 'gofish';
 
 export function Game() {
   const { code } = useParams<{ code: string }>();
@@ -19,6 +21,16 @@ export function Game() {
   const [askRank, setAskRank] = useState<Rank>('A');
   const [askTargetId, setAskTargetId] = useState('');
   const [actionError, setActionError] = useState('');
+
+  // --- Settings panel / Deal Again ---
+  const [showSettings, setShowSettings] = useState(false);
+  const [pendingConfig, setPendingConfig] = useState<GeneratedGameConfig | null>(null);
+  const [featurePrompt, setFeaturePrompt] = useState('');
+  const [amending, setAmending] = useState(false);
+  const [redealing, setRedealing] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
 
   const myPlayerId = localStorage.getItem('cardroom_player_id');
 
@@ -190,6 +202,96 @@ export function Game() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room?.current_turn, room?.id, game?.turnBased]);
 
+  // --- Settings panel / Deal Again ---
+
+  const pendingMode: PendingMode = pendingConfig?.showBlackjackControls ? 'blackjack'
+    : pendingConfig?.showHoldemControls ? 'holdem'
+    : pendingConfig?.isGoFishLike ? 'gofish'
+    : 'freeplay';
+
+  function openSettings() {
+    if (!game) return;
+    setPendingConfig(toEditableConfig(game));
+    setSettingsError('');
+    setFeaturePrompt('');
+    setSaveName('');
+    setShowSettings(true);
+  }
+
+  function applyModeChange(newMode: PendingMode) {
+    setPendingConfig(prev => {
+      if (!prev) return prev;
+      const turnBased = newMode === 'holdem' ? false : newMode === 'freeplay' ? prev.turnBased : true;
+      return {
+        ...prev,
+        showBlackjackControls: newMode === 'blackjack',
+        showHoldemControls: newMode === 'holdem',
+        isGoFishLike: newMode === 'gofish',
+        turnBased,
+      };
+    });
+  }
+
+  function updateField<K extends keyof GeneratedGameConfig>(key: K, value: GeneratedGameConfig[K]) {
+    setPendingConfig(prev => prev && { ...prev, [key]: value });
+  }
+
+  function updateDealPlan<K extends keyof DealPlan>(key: K, value: DealPlan[K]) {
+    setPendingConfig(prev => prev && { ...prev, dealPlan: { ...prev.dealPlan, [key]: value } });
+  }
+
+  async function amendWithAI() {
+    const prompt = featurePrompt.trim();
+    if (!prompt || !pendingConfig) return;
+    setAmending(true);
+    setSettingsError('');
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('design-game', {
+        body: { prompt, playerCount: orderedPlayers.length, currentConfig: pendingConfig },
+      });
+      if (fnError) {
+        throw new Error(await getEdgeFunctionErrorMessage(fnError, 'Failed to update the game. Try again.'));
+      }
+      if (data?.error) throw new Error(data.error);
+      setPendingConfig(data as GeneratedGameConfig);
+      setFeaturePrompt('');
+    } catch (e) {
+      setSettingsError(getErrorMessage(e, 'Failed to update the game. Try again.'));
+    } finally {
+      setAmending(false);
+    }
+  }
+
+  async function saveToLibrary() {
+    const name = saveName.trim();
+    if (!name || !pendingConfig) return;
+    setSaving(true);
+    setSettingsError('');
+    try {
+      const { error: saveErr } = await supabase.from('saved_games').insert({ name, config: pendingConfig });
+      if (saveErr) throw saveErr;
+      setSaveName('');
+    } catch (e) {
+      setSettingsError(getErrorMessage(e, 'Failed to save.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function dealAgain() {
+    if (!room || !pendingConfig) return;
+    setRedealing(true);
+    setSettingsError('');
+    try {
+      await dealGame(room, pendingConfig, orderedPlayers);
+      setShowSettings(false);
+    } catch (e) {
+      setSettingsError(getErrorMessage(e, 'Failed to deal again. Try again.'));
+    } finally {
+      setRedealing(false);
+    }
+  }
+
   // --- Actions ---
 
   async function drawFromDeck() {
@@ -336,6 +438,11 @@ export function Game() {
           <button onClick={() => setShowInstructions(v => !v)} className="text-white/40 hover:text-white text-xs">
             Rules
           </button>
+          {isDealer && (
+            <button onClick={openSettings} className="text-white/40 hover:text-white text-xs">
+              Settings
+            </button>
+          )}
         </div>
         <div className="text-right">
           <span className="text-emerald-400 font-semibold text-sm">{room?.game_name}</span>
@@ -609,6 +716,171 @@ export function Game() {
             <div className="flex gap-2">
               <button onClick={() => setShowAskDialog(false)} className="flex-1 bg-white/10 text-white py-3 rounded-xl font-semibold">Cancel</button>
               <button onClick={executeGoFishAsk} className="flex-1 bg-emerald-500 text-white py-3 rounded-xl font-bold">Ask!</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dealer: Game Settings panel */}
+      {showSettings && pendingConfig && (
+        <div className="fixed inset-0 bg-black/70 flex items-end justify-center z-50" onClick={() => setShowSettings(false)}>
+          <div className="bg-emerald-900 border border-emerald-700 rounded-t-2xl w-full max-w-md p-6 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="text-white font-bold text-lg mb-4">Game Settings</h3>
+
+            <div className="mb-4">
+              <label className="text-white/60 text-sm mb-1 block">Name</label>
+              <input
+                value={pendingConfig.name}
+                onChange={e => updateField('name', e.target.value)}
+                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none"
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="text-white/60 text-sm mb-1 block">Mode</label>
+              <select
+                value={pendingMode}
+                onChange={e => applyModeChange(e.target.value as PendingMode)}
+                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none appearance-none"
+              >
+                <option value="freeplay" className="bg-emerald-950">Free play (play/discard)</option>
+                <option value="blackjack" className="bg-emerald-950">Blackjack (hit/stand)</option>
+                <option value="holdem" className="bg-emerald-950">Hold'em (community cards)</option>
+                <option value="gofish" className="bg-emerald-950">Go Fish (ask for cards)</option>
+              </select>
+            </div>
+
+            {pendingMode === 'freeplay' && (
+              <div className="mb-4 flex flex-col gap-3">
+                <label className="flex items-center gap-2 text-white/80 text-sm">
+                  <input type="checkbox" checked={pendingConfig.turnBased}
+                    onChange={e => updateField('turnBased', e.target.checked)} />
+                  Turn-based
+                </label>
+                <label className="flex items-center gap-2 text-white/80 text-sm">
+                  <input type="checkbox" checked={pendingConfig.canDrawFromDiscard}
+                    onChange={e => updateField('canDrawFromDiscard', e.target.checked)} />
+                  Players can draw from the discard pile
+                </label>
+              </div>
+            )}
+
+            {/* Go Fish also deals via the generic dealPlan-driven path, so these apply there too */}
+            {(pendingMode === 'freeplay' || pendingMode === 'gofish') && (
+              <div className="mb-4 flex flex-col gap-3">
+                <div>
+                  <label className="text-white/60 text-sm mb-1 block">Cards per player</label>
+                  <input
+                    type="number" min={1} max={13}
+                    value={pendingConfig.dealPlan.cardsPerPlayer}
+                    onChange={e => updateDealPlan('cardsPerPlayer', Math.max(1, Math.min(13, Number(e.target.value) || 1)))}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none"
+                  />
+                </div>
+                {pendingMode === 'freeplay' && (
+                  <label className="flex items-center gap-2 text-white/80 text-sm">
+                    <input type="checkbox" checked={pendingConfig.dealPlan.splitEntireDeck}
+                      onChange={e => updateDealPlan('splitEntireDeck', e.target.checked)} />
+                    Split the whole deck evenly (War-style)
+                  </label>
+                )}
+                {pendingMode === 'freeplay' && (
+                  <label className="flex items-center gap-2 text-white/80 text-sm">
+                    <input type="checkbox" checked={pendingConfig.dealPlan.discardPileStart}
+                      onChange={e => updateDealPlan('discardPileStart', e.target.checked)} />
+                    Start with a table/discard card
+                  </label>
+                )}
+                <label className="flex items-center gap-2 text-white/80 text-sm">
+                  <input type="checkbox" checked={pendingConfig.dealPlan.handFaceUp}
+                    onChange={e => updateDealPlan('handFaceUp', e.target.checked)} />
+                  Hands visible to everyone
+                </label>
+              </div>
+            )}
+
+            <div className="mb-4 flex gap-3">
+              <div className="flex-1">
+                <label className="text-white/60 text-sm mb-1 block">Min players</label>
+                <input
+                  type="number" min={1}
+                  value={pendingConfig.minPlayers}
+                  onChange={e => updateField('minPlayers', Math.max(1, Number(e.target.value) || 1))}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="text-white/60 text-sm mb-1 block">Max players</label>
+                <input
+                  type="number" min={1}
+                  value={pendingConfig.maxPlayers}
+                  onChange={e => updateField('maxPlayers', Math.max(1, Number(e.target.value) || 1))}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="text-white/60 text-sm mb-1 block">Instructions</label>
+              <textarea
+                value={pendingConfig.instructions}
+                onChange={e => updateField('instructions', e.target.value)}
+                rows={3}
+                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none text-sm"
+              />
+            </div>
+
+            <div className="mb-4 border-t border-white/10 pt-4">
+              <label className="text-white/60 text-sm mb-1 block">Describe a change</label>
+              <input
+                value={featurePrompt}
+                onChange={e => setFeaturePrompt(e.target.value)}
+                placeholder="e.g. add jokers as wild cards"
+                maxLength={200}
+                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-white/40 focus:outline-none"
+              />
+              <button
+                onClick={amendWithAI}
+                disabled={amending || !featurePrompt.trim()}
+                className="w-full mt-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+              >
+                {amending ? 'Asking AI…' : 'Ask AI'}
+              </button>
+            </div>
+
+            <div className="mb-4 border-t border-white/10 pt-4">
+              <label className="text-white/60 text-sm mb-1 block">Save these settings</label>
+              <input
+                value={saveName}
+                onChange={e => setSaveName(e.target.value)}
+                placeholder="e.g. Friday Night Rummy"
+                maxLength={60}
+                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-white/40 focus:outline-none"
+              />
+              <button
+                onClick={saveToLibrary}
+                disabled={saving || !saveName.trim()}
+                className="w-full mt-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+              >
+                {saving ? 'Saving…' : 'Save to Library'}
+              </button>
+            </div>
+
+            {settingsError && (
+              <p className="text-red-400 text-sm bg-red-900/30 border border-red-700/50 rounded-lg px-4 py-2 mb-4">{settingsError}</p>
+            )}
+
+            <div className="flex gap-2">
+              <button onClick={() => setShowSettings(false)} className="flex-1 bg-white/10 text-white py-3 rounded-xl font-semibold">
+                Cancel
+              </button>
+              <button
+                onClick={dealAgain}
+                disabled={redealing}
+                className="flex-1 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-amber-950 py-3 rounded-xl font-bold"
+              >
+                {redealing ? 'Dealing…' : 'Deal Again'}
+              </button>
             </div>
           </div>
         </div>

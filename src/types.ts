@@ -53,6 +53,13 @@ export interface GeneratedGameConfig {
   clarifyingOptions: ClarifyingOption[];
 }
 
+export interface SavedGame {
+  id: string;
+  name: string;
+  config: GeneratedGameConfig;
+  created_at: string;
+}
+
 export interface Room {
   id: string;
   code: string;

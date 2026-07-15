@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, FunctionsHttpError } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
@@ -19,4 +19,22 @@ export function getErrorMessage(e: unknown, fallback = 'Something went wrong'): 
     return (e as { message: string }).message;
   }
   return fallback;
+}
+
+/**
+ * `supabase.functions.invoke()` collapses every non-2xx response into the generic
+ * "Edge Function returned a non-2xx status code" message — the actual error body our
+ * function sends back (`{ error: "..." }`) is only reachable via `error.context`, the raw
+ * Response object. This unwraps it so the UI can show the real reason.
+ */
+export async function getEdgeFunctionErrorMessage(e: unknown, fallback = 'Something went wrong'): Promise<string> {
+  if (e instanceof FunctionsHttpError) {
+    try {
+      const body = await e.context.json();
+      if (body?.error) return body.error as string;
+    } catch {
+      // Response body wasn't JSON — fall through to the generic message below.
+    }
+  }
+  return getErrorMessage(e, fallback);
 }

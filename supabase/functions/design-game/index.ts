@@ -6,6 +6,11 @@
 // parameterize the deal, write instructions text, and surface clarifying
 // questions when the request is genuinely ambiguous.
 //
+// Also doubles as an "amend" endpoint: pass `currentConfig` (a GeneratedGameConfig)
+// alongside the prompt to have the AI interpret the prompt as a change against that
+// existing config instead of designing from scratch — used by the in-game settings
+// panel's "Describe a change" box.
+//
 // Deploy: supabase functions deploy design-game
 // Secret: supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 
@@ -93,6 +98,8 @@ For modes 3-5, set dealPlan: cardsPerPlayer (reasonable hand size, 1-13), splitE
 
 Only include clarifyingOptions (max 3) when the request is genuinely ambiguous in a way that changes the deal or mode — e.g. an unfamiliar or made-up game where hand size or visibility isn't implied. For well-known games (Hold'em, Blackjack, War, Go Fish, Rummy, Crazy Eights, Egyptian Ratscrew, Speed, etc.) or clearly-specified custom games, return an empty clarifyingOptions array. Each clarifying option's "key" must reference one of the dealPlan/top-level fields it should override, and "choices" must be 2-4 concrete options with string "value"s matching the field's type (e.g. "true"/"false" for booleans, a number as a string for cardsPerPlayer).
 
+When you're given an existing config to amend (players mid-game, asking for a change), return the FULL updated config with the requested change applied — keep every field not implied by the request exactly as it was. Always return an empty clarifyingOptions array in this mode: make the best reasonable interpretation yourself instead of asking, since the dealer can immediately review and adjust anything via the settings panel.
+
 Write "instructions" as a single concise paragraph in a friendly, direct tone, matching how you'd explain the rules to someone about to play — similar in length and style to: "Get as close to 21 as possible. Number cards = face value, face cards = 10, Ace = 1 or 11. First player is the dealer — their second card is hidden. Players Hit (draw) or Stand. Dealer plays last." Do not mention the engine, modes, or config fields in the instructions text — it's shown directly to players.
 
 minPlayers and maxPlayers should be sensible for the game (most card games: 2-8).`;
@@ -113,6 +120,7 @@ Deno.serve(async (req: Request) => {
     const body = await req.json().catch(() => null);
     const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
     const playerCount = Number.isInteger(body?.playerCount) ? body.playerCount : null;
+    const currentConfig = body?.currentConfig && typeof body.currentConfig === 'object' ? body.currentConfig : null;
 
     if (!prompt || prompt.length > 200) {
       return new Response(JSON.stringify({ error: 'Describe the game in 1-200 characters.' }), {
@@ -137,6 +145,10 @@ Deno.serve(async (req: Request) => {
 
     const client = new Anthropic({ apiKey });
 
+    const userMessage = currentConfig
+      ? `The players are mid-game with this existing config:\n${JSON.stringify(currentConfig)}\n\nThey want this change: "${prompt}"\nCurrent players seated: ${playerCount}\n\nReturn the full updated config with the change applied, preserving everything else. Do not return clarifyingOptions — make a reasonable interpretation directly.`
+      : `Game to design: "${prompt}"\nCurrent players seated: ${playerCount}`;
+
     const response = await client.messages.create({
       model: 'claude-opus-4-8',
       max_tokens: 2048,
@@ -147,7 +159,7 @@ Deno.serve(async (req: Request) => {
       },
       system: SYSTEM_PROMPT,
       messages: [
-        { role: 'user', content: `Game to design: "${prompt}"\nCurrent players seated: ${playerCount}` },
+        { role: 'user', content: userMessage },
       ],
     });
 

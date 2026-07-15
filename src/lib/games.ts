@@ -1,5 +1,6 @@
 import { createDeck, shuffle } from './deck';
-import type { Card, GeneratedGameConfig, Room } from '@/types';
+import { supabase } from './supabase';
+import type { Card, GeneratedGameConfig, Player, Room } from '@/types';
 
 export interface GameDeal {
   hands: Card[][];
@@ -246,4 +247,69 @@ export function resolveGame(room: Pick<Room, 'game_id' | 'custom_game'> | null |
   if (!room?.game_id) return null;
   if (room.game_id === 'custom') return room.custom_game;
   return getGame(room.game_id) ?? null;
+}
+
+/**
+ * Deals `game` to `orderedPlayers` and writes the result to Supabase. Shared by the Lobby's
+ * initial deal and the Game screen's "Deal Again" — same write shape either way.
+ */
+export async function dealGame(
+  room: Pick<Room, 'id'>,
+  game: GameConfig | GeneratedGameConfig,
+  orderedPlayers: Player[],
+): Promise<void> {
+  const isCustom = !('deal' in game);
+  const { hands, communityCards, discardPile, remainingDeck } = isCustom
+    ? dealFromGeneratedConfig(game as GeneratedGameConfig, orderedPlayers.length)
+    : (game as GameConfig).deal(orderedPlayers.length);
+  const firstTurnId = game.turnBased
+    ? orderedPlayers[game.showBlackjackControls ? 1 : 0]?.id ?? null
+    : null;
+
+  for (let i = 0; i < orderedPlayers.length; i++) {
+    await supabase.from('players')
+      .update({ hand: hands[i], is_standing: false })
+      .eq('id', orderedPlayers[i].id);
+  }
+
+  await supabase.from('rooms').update({
+    game_id: isCustom ? 'custom' : (game as GameConfig).id,
+    game_name: game.name,
+    state: 'playing',
+    deck: remainingDeck,
+    community_cards: communityCards,
+    discard_pile: discardPile,
+    current_turn: firstTurnId,
+    holdem_stage: game.showHoldemControls ? 'preflop' : null,
+    custom_game: isCustom ? (game as GeneratedGameConfig) : null,
+  }).eq('id', room.id);
+}
+
+/**
+ * Presets aren't backed by a `dealPlan` — promote one into an equivalent editable config the
+ * first time a dealer opens the in-game Settings panel on a preset room. Blackjack/Hold'em keep
+ * dealing exactly the same way afterward since `dealFromGeneratedConfig` ignores `dealPlan` for
+ * those two modes; the other presets get reasonable (not exact) defaults the dealer can adjust.
+ */
+export function toEditableConfig(game: GameConfig | GeneratedGameConfig): GeneratedGameConfig {
+  if (!('deal' in game)) return game;
+  return {
+    name: game.name,
+    description: game.description,
+    instructions: game.instructions,
+    minPlayers: game.minPlayers,
+    maxPlayers: game.maxPlayers,
+    turnBased: game.turnBased,
+    canDrawFromDiscard: game.canDrawFromDiscard,
+    showBlackjackControls: game.showBlackjackControls,
+    showHoldemControls: game.showHoldemControls,
+    isGoFishLike: !!game.isGoFishLike,
+    dealPlan: {
+      cardsPerPlayer: 5,
+      splitEntireDeck: game.id === 'war',
+      discardPileStart: game.id === 'rummy' || game.id === 'crazy-eights',
+      handFaceUp: game.id !== 'war',
+    },
+    clarifyingOptions: [],
+  };
 }

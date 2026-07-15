@@ -38,16 +38,27 @@ CREATE TABLE IF NOT EXISTS public.players (
 -- Migration for existing installs (safe to re-run)
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS is_bot boolean NOT NULL DEFAULT false;
 
+-- Saved games — reusable AI-designed / edited configs, shared across all players
+CREATE TABLE IF NOT EXISTS public.saved_games (
+  id          uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  name        text NOT NULL,
+  config      jsonb NOT NULL,
+  created_at  timestamptz DEFAULT now()
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_rooms_code ON public.rooms(code);
 CREATE INDEX IF NOT EXISTS idx_players_room ON public.players(room_id);
+CREATE INDEX IF NOT EXISTS idx_saved_games_created ON public.saved_games(created_at DESC);
 
 -- Row Level Security (honor-system: all operations allowed via anon key)
 ALTER TABLE public.rooms  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.players ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.saved_games ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "rooms_all_anon"   ON public.rooms   FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "players_all_anon" ON public.players FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "saved_games_all_anon" ON public.saved_games FOR ALL USING (true) WITH CHECK (true);
 
 -- Enable Realtime for both tables
 ALTER PUBLICATION supabase_realtime ADD TABLE public.rooms;
