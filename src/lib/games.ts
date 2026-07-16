@@ -282,6 +282,7 @@ export async function dealGame(
     current_turn: firstTurnId,
     holdem_stage: game.showHoldemControls ? 'preflop' : null,
     custom_game: isCustom ? (game as GeneratedGameConfig) : null,
+    action_log: [],
   }).eq('id', room.id);
 }
 

@@ -45,6 +45,21 @@ export function Game() {
   const canAct = !game?.turnBased || isMyTurn;
   const selectedCard = myPlayer?.hand.find(c => c.id === selectedCardId) ?? null;
   const topDiscard = room?.discard_pile.at(-1) ?? null;
+  const allBlackjackDone = !!game?.showBlackjackControls
+    && orderedPlayers.length > 0
+    && orderedPlayers.every(p => p.is_standing);
+
+  function appendLog(current: string[] | null | undefined, entry: string): string[] {
+    return [...(current ?? []), entry].slice(-30);
+  }
+
+  function blackjackOutcome(playerValue: number, dealerValue: number): 'win' | 'lose' | 'push' {
+    if (playerValue > 21) return 'lose';
+    if (dealerValue > 21) return 'win';
+    if (playerValue > dealerValue) return 'win';
+    if (playerValue < dealerValue) return 'lose';
+    return 'push';
+  }
 
   const load = useCallback(async () => {
     if (!code) return;
@@ -96,19 +111,24 @@ export function Game() {
 
     if (game?.showBlackjackControls) {
       let deck = freshRoom.deck;
+      let log = freshRoom.action_log ?? [];
       while (blackjackValue(hand) < 17 && deck.length > 0) {
         const [drawn, ...rest] = deck;
         deck = rest;
         hand = [...hand, { ...drawn, faceUp: true }];
+        const value = blackjackValue(hand);
+        log = appendLog(log, value > 21 ? `${bot.name} hit and busted with ${value}` : `${bot.name} hit — now at ${value}`);
         await Promise.all([
-          supabase.from('rooms').update({ deck }).eq('id', room.id),
+          supabase.from('rooms').update({ deck, action_log: log }).eq('id', room.id),
           supabase.from('players').update({ hand }).eq('id', bot.id),
         ]);
       }
+      const finalValue = blackjackValue(hand);
+      if (finalValue <= 21) log = appendLog(log, `${bot.name} stood on ${finalValue}`);
       const nextTurn = nextPlayerInOrder(orderedPlayers, bot.id);
       await Promise.all([
         supabase.from('players').update({ is_standing: true }).eq('id', bot.id),
-        supabase.from('rooms').update({ current_turn: nextTurn }).eq('id', room.id),
+        supabase.from('rooms').update({ current_turn: nextTurn, action_log: log }).eq('id', room.id),
       ]);
       return;
     }
@@ -201,6 +221,18 @@ export function Game() {
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room?.current_turn, room?.id, game?.turnBased]);
+
+  // Once every Blackjack player is standing/busted, reveal the dealer's hidden card so the
+  // round result is computable — not gated to the dealer's own tab, since the dealer seat
+  // might be a bot with nobody around to click "Reveal Hand".
+  useEffect(() => {
+    if (!allBlackjackDone) return;
+    const dealerPlayer = orderedPlayers[0];
+    if (!dealerPlayer || dealerPlayer.hand.every(c => c.faceUp)) return;
+    const revealedHand = dealerPlayer.hand.map(c => ({ ...c, faceUp: true }));
+    supabase.from('players').update({ hand: revealedHand }).eq('id', dealerPlayer.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allBlackjackDone, room?.id]);
 
   // --- Settings panel / Deal Again ---
 
@@ -299,6 +331,24 @@ export function Game() {
     setActionError('');
     const [drawn, ...remainingDeck] = room.deck;
     const newHand = [...myPlayer.hand, drawn];
+
+    if (game?.showBlackjackControls) {
+      const value = blackjackValue(newHand);
+      const busted = value > 21;
+      const roomUpdate: Record<string, unknown> = {
+        deck: remainingDeck,
+        action_log: appendLog(room.action_log, busted
+          ? `${myPlayer.name} hit and busted with ${value}`
+          : `${myPlayer.name} hit — now at ${value}`),
+      };
+      if (busted) roomUpdate.current_turn = nextPlayerInOrder(orderedPlayers, myPlayerId ?? null);
+      await Promise.all([
+        supabase.from('rooms').update(roomUpdate).eq('id', room.id),
+        supabase.from('players').update({ hand: newHand, is_standing: busted }).eq('id', myPlayer.id),
+      ]);
+      return;
+    }
+
     await Promise.all([
       supabase.from('rooms').update({ deck: remainingDeck }).eq('id', room.id),
       supabase.from('players').update({ hand: newHand }).eq('id', myPlayer.id),
@@ -349,9 +399,13 @@ export function Game() {
     if (!room || !myPlayer) return;
     setActionError('');
     const nextTurn = nextPlayerInOrder(orderedPlayers, myPlayerId ?? null);
+    const roomUpdate: Record<string, unknown> = { current_turn: nextTurn };
+    if (game?.showBlackjackControls) {
+      roomUpdate.action_log = appendLog(room.action_log, `${myPlayer.name} stood on ${blackjackValue(myPlayer.hand)}`);
+    }
     await Promise.all([
       supabase.from('players').update({ is_standing: true }).eq('id', myPlayer.id),
-      supabase.from('rooms').update({ current_turn: nextTurn }).eq('id', room.id),
+      supabase.from('rooms').update(roomUpdate).eq('id', room.id),
     ]);
   }
 
@@ -492,6 +546,44 @@ export function Game() {
         </div>
       )}
 
+      {/* Blackjack: round results, once everyone is standing/busted */}
+      {allBlackjackDone && dealer && (
+        <div className="mx-4 mt-3 bg-amber-900/30 border border-amber-700/40 rounded-xl px-4 py-3">
+          <p className="text-amber-300 text-xs font-bold uppercase tracking-wide mb-2">Round Results</p>
+          <div className="flex flex-col gap-1">
+            {orderedPlayers.slice(1).map(p => {
+              const value = blackjackValue(p.hand);
+              const dealerValue = blackjackValue(dealer.hand);
+              const outcome = blackjackOutcome(value, dealerValue);
+              const label = outcome === 'win' ? 'Win' : outcome === 'lose' ? (value > 21 ? 'Bust' : 'Lose') : 'Push';
+              const color = outcome === 'win' ? 'text-emerald-400' : outcome === 'lose' ? 'text-red-400' : 'text-white/60';
+              return (
+                <div key={p.id} className="flex justify-between text-sm">
+                  <span className="text-white/80">{p.name} ({value})</span>
+                  <span className={`font-semibold ${color}`}>{label}</span>
+                </div>
+              );
+            })}
+            <div className="flex justify-between text-sm border-t border-amber-700/30 mt-1 pt-1">
+              <span className="text-amber-200">Dealer ({blackjackValue(dealer.hand)})</span>
+              {blackjackValue(dealer.hand) > 21 && <span className="text-red-400 font-semibold">Bust</span>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Blackjack: action history */}
+      {game?.showBlackjackControls && (room?.action_log?.length ?? 0) > 0 && (
+        <div className="mx-4 mt-3 bg-black/20 border border-white/10 rounded-xl px-3 py-2 max-h-28 overflow-y-auto">
+          <p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-1">Action History</p>
+          <div className="flex flex-col gap-0.5">
+            {room!.action_log.map((entry, i) => (
+              <p key={i} className="text-white/60 text-xs">{entry}</p>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Other players */}
       <div className="px-4 pt-4 pb-2">
         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
@@ -522,7 +614,9 @@ export function Game() {
                   <span className="text-white/30 text-xs">No cards</span>
                 )}
                 {player.is_standing && game?.showBlackjackControls && (
-                  <div className="text-amber-400 text-xs mt-1 font-semibold">STAND</div>
+                  <div className={`text-xs mt-1 font-semibold ${blackjackValue(player.hand) > 21 ? 'text-red-400' : 'text-amber-400'}`}>
+                    {blackjackValue(player.hand) > 21 ? 'BUST' : 'STAND'}
+                  </div>
                 )}
               </div>
             );
@@ -595,7 +689,9 @@ export function Game() {
         <div className="flex items-center justify-between mb-2">
           <p className="text-white/60 text-xs font-medium">Your hand · {myPlayer?.name}</p>
           {myPlayer?.is_standing && game?.showBlackjackControls && (
-            <span className="text-amber-400 text-xs font-semibold">STANDING</span>
+            <span className={`text-xs font-semibold ${blackjackValue(myPlayer.hand) > 21 ? 'text-red-400' : 'text-amber-400'}`}>
+              {blackjackValue(myPlayer.hand) > 21 ? 'BUSTED' : 'STANDING'}
+            </span>
           )}
         </div>
         {(myPlayer?.hand.length ?? 0) > 0 ? (
@@ -621,24 +717,32 @@ export function Game() {
 
       {/* Action bar */}
       <div className="px-4 py-3 bg-black/30 border-t border-white/10 safe-bottom">
-        {game?.showBlackjackControls && !myPlayer?.is_standing ? (
-          // Blackjack controls
-          <div className="flex gap-2">
-            <button
-              onClick={canAct ? drawFromDeck : undefined}
-              disabled={!canAct}
-              className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold py-3 rounded-xl transition-colors"
-            >
-              Hit
-            </button>
-            <button
-              onClick={canAct ? stand : undefined}
-              disabled={!canAct}
-              className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold py-3 rounded-xl transition-colors"
-            >
-              Stand
-            </button>
-          </div>
+        {game?.showBlackjackControls ? (
+          !myPlayer?.is_standing ? (
+            // Blackjack controls
+            <div className="flex gap-2">
+              <button
+                onClick={canAct ? drawFromDeck : undefined}
+                disabled={!canAct}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold py-3 rounded-xl transition-colors"
+              >
+                Hit
+              </button>
+              <button
+                onClick={canAct ? stand : undefined}
+                disabled={!canAct}
+                className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold py-3 rounded-xl transition-colors"
+              >
+                Stand
+              </button>
+            </div>
+          ) : allBlackjackDone ? (
+            <p className="text-white/40 text-sm text-center py-2">Round over — see results above.</p>
+          ) : (
+            <p className="text-white/40 text-sm text-center py-2">
+              You {blackjackValue(myPlayer?.hand ?? []) > 21 ? 'busted' : 'stood'} on {blackjackValue(myPlayer?.hand ?? [])} — waiting for other players…
+            </p>
+          )
         ) : game?.isGoFishLike ? (
           // Go Fish controls
           <div className="flex gap-2">
@@ -681,7 +785,7 @@ export function Game() {
           </div>
         )}
 
-        {!canAct && game?.turnBased && (
+        {!canAct && game?.turnBased && !(game?.showBlackjackControls && myPlayer?.is_standing) && (
           <p className="text-white/30 text-xs text-center mt-2">Wait for your turn…</p>
         )}
         {!selectedCard && canAct && !game?.showBlackjackControls && !game?.isGoFishLike && (

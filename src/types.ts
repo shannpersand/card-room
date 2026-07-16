@@ -72,5 +72,6 @@ export interface Room {
   current_turn: string | null; // player id
   holdem_stage: HoldemStage | null;
   custom_game: GeneratedGameConfig | null;
+  action_log: string[];
   created_at: string;
 }
