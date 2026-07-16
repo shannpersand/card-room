@@ -73,5 +73,6 @@ export interface Room {
   holdem_stage: HoldemStage | null;
   custom_game: GeneratedGameConfig | null;
   action_log: string[];
+  back_color: string;
   created_at: string;
 }

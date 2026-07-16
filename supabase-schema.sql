@@ -17,12 +17,14 @@ CREATE TABLE IF NOT EXISTS public.rooms (
   holdem_stage    text CHECK (holdem_stage IN ('preflop', 'flop', 'turn', 'river')),
   custom_game     jsonb,
   action_log      jsonb NOT NULL DEFAULT '[]',
+  back_color      text NOT NULL DEFAULT 'blue',
   created_at      timestamptz DEFAULT now()
 );
 
 -- Migration for existing installs (safe to re-run)
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS custom_game jsonb;
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS action_log jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS back_color text NOT NULL DEFAULT 'blue';
 
 -- Players table
 CREATE TABLE IF NOT EXISTS public.players (

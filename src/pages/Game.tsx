@@ -4,6 +4,7 @@ import { supabase, getErrorMessage, getEdgeFunctionErrorMessage } from '@/lib/su
 import { resolveGame, dealGame, toEditableConfig } from '@/lib/games';
 import { nextPlayerInOrder, blackjackValue, RANKS } from '@/lib/deck';
 import { PlayingCard } from '@/components/PlayingCard';
+import { BACK_COLORS, resolveBackColorHex, type BackColorKey } from '@/lib/cardArt';
 import type { Room, Player, Card, HoldemStage, Rank, GeneratedGameConfig, DealPlan } from '@/types';
 
 type PendingMode = 'freeplay' | 'blackjack' | 'holdem' | 'gofish';
@@ -352,6 +353,16 @@ export function Game() {
     }
   }
 
+  /** Cosmetic only, so it applies instantly rather than waiting for a redeal. */
+  async function setBackColor(color: BackColorKey) {
+    if (!room) return;
+    try {
+      await supabase.from('rooms').update({ back_color: color }).eq('id', room.id);
+    } catch (e) {
+      setSettingsError(getErrorMessage(e, 'Failed to change card back color.'));
+    }
+  }
+
   // --- Actions ---
 
   async function drawFromDeck() {
@@ -639,7 +650,7 @@ export function Game() {
                 {player.hand.length > 0 ? (
                   <div className="flex gap-1">
                     {player.hand.slice(0, 4).map((card, i) => (
-                      <PlayingCard key={card.id + i} card={card} size="sm" />
+                      <PlayingCard key={card.id + i} card={card} size="sm" backColor={room?.back_color} />
                     ))}
                     {player.hand.length > 4 && (
                       <div className="w-[4.5rem] h-28 flex items-center justify-center text-white/40 text-sm">
@@ -672,7 +683,7 @@ export function Game() {
             <p className="text-white/40 text-xs mb-2">Table</p>
             <div className="flex gap-2 overflow-x-auto no-scrollbar">
               {room!.community_cards.map((card, i) => (
-                <PlayingCard key={card.id + i} card={card} size="md" />
+                <PlayingCard key={card.id + i} card={card} size="md" backColor={room?.back_color} />
               ))}
             </div>
           </div>
@@ -686,9 +697,11 @@ export function Game() {
             disabled={!canAct || (room?.deck.length ?? 0) === 0}
             className="flex flex-col items-center gap-1 disabled:opacity-40"
           >
-            <div className={`w-28 h-40 rounded-lg border-2 border-blue-600 bg-blue-800 flex items-center justify-center shadow-lg
-              ${canAct && (room?.deck.length ?? 0) > 0 ? 'hover:border-blue-400 cursor-pointer' : 'cursor-default'}
-              card-back-pattern`}
+            <div
+              className={`w-28 h-40 rounded-lg border-2 flex items-center justify-center shadow-lg
+                ${canAct && (room?.deck.length ?? 0) > 0 ? 'cursor-pointer' : 'cursor-default'}
+                card-back-pattern`}
+              style={{ backgroundColor: resolveBackColorHex(room?.back_color), borderColor: resolveBackColorHex(room?.back_color) }}
             >
               <span className="text-white/40 text-sm font-bold">{room?.deck.length ?? 0}</span>
             </div>
@@ -700,7 +713,7 @@ export function Game() {
             {topDiscard ? (
               <div onClick={game?.canDrawFromDiscard && canAct ? drawFromDiscard : undefined}
                 className={game?.canDrawFromDiscard && canAct ? 'cursor-pointer' : 'cursor-default'}>
-                <PlayingCard card={topDiscard} size="md" />
+                <PlayingCard card={topDiscard} size="md" backColor={room?.back_color} />
               </div>
             ) : (
               <div className="w-28 h-40 rounded-lg border-2 border-dashed border-white/20 flex items-center justify-center">
@@ -875,6 +888,25 @@ export function Game() {
                 onChange={e => updateField('name', e.target.value)}
                 className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none"
               />
+            </div>
+
+            <div className="mb-4">
+              <label className="text-white/60 text-sm mb-2 block">Card back color</label>
+              <div className="flex gap-2">
+                {(Object.keys(BACK_COLORS) as BackColorKey[]).map(key => (
+                  <button
+                    key={key}
+                    onClick={() => setBackColor(key)}
+                    title={key}
+                    aria-label={key}
+                    className={`w-9 h-9 rounded-full border-2 transition-transform
+                      ${room?.back_color === key || (!room?.back_color && key === 'blue')
+                        ? 'border-white scale-110'
+                        : 'border-white/20 hover:border-white/50'}`}
+                    style={{ backgroundColor: BACK_COLORS[key] }}
+                  />
+                ))}
+              </div>
             </div>
 
             <div className="mb-4">
