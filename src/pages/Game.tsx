@@ -31,6 +31,7 @@ export function Game() {
   const [saveName, setSaveName] = useState('');
   const [saving, setSaving] = useState(false);
   const [settingsError, setSettingsError] = useState('');
+  const [playingAgain, setPlayingAgain] = useState(false);
 
   const myPlayerId = localStorage.getItem('cardroom_player_id');
 
@@ -51,6 +52,20 @@ export function Game() {
 
   function appendLog(current: string[] | null | undefined, entry: string): string[] {
     return [...(current ?? []), entry].slice(-30);
+  }
+
+  // Best-effort, isolated from the critical game-state path — a failure here (e.g. the
+  // action_log column not existing yet because a migration hasn't been run) must never
+  // block a turn from advancing.
+  async function logAction(entry: string) {
+    if (!room) return;
+    try {
+      const { data } = await supabase.from('rooms').select('action_log').eq('id', room.id).single();
+      const current = (data as { action_log: string[] } | null)?.action_log;
+      await supabase.from('rooms').update({ action_log: appendLog(current, entry) }).eq('id', room.id);
+    } catch {
+      // Ignore — history is a nice-to-have, not required for gameplay to proceed.
+    }
   }
 
   function blackjackOutcome(playerValue: number, dealerValue: number): 'win' | 'lose' | 'push' {
@@ -111,25 +126,24 @@ export function Game() {
 
     if (game?.showBlackjackControls) {
       let deck = freshRoom.deck;
-      let log = freshRoom.action_log ?? [];
       while (blackjackValue(hand) < 17 && deck.length > 0) {
         const [drawn, ...rest] = deck;
         deck = rest;
         hand = [...hand, { ...drawn, faceUp: true }];
         const value = blackjackValue(hand);
-        log = appendLog(log, value > 21 ? `${bot.name} hit and busted with ${value}` : `${bot.name} hit — now at ${value}`);
         await Promise.all([
-          supabase.from('rooms').update({ deck, action_log: log }).eq('id', room.id),
+          supabase.from('rooms').update({ deck }).eq('id', room.id),
           supabase.from('players').update({ hand }).eq('id', bot.id),
         ]);
+        await logAction(value > 21 ? `${bot.name} hit and busted with ${value}` : `${bot.name} hit — now at ${value}`);
       }
       const finalValue = blackjackValue(hand);
-      if (finalValue <= 21) log = appendLog(log, `${bot.name} stood on ${finalValue}`);
       const nextTurn = nextPlayerInOrder(orderedPlayers, bot.id);
       await Promise.all([
         supabase.from('players').update({ is_standing: true }).eq('id', bot.id),
-        supabase.from('rooms').update({ current_turn: nextTurn, action_log: log }).eq('id', room.id),
+        supabase.from('rooms').update({ current_turn: nextTurn }).eq('id', room.id),
       ]);
+      if (finalValue <= 21) await logAction(`${bot.name} stood on ${finalValue}`);
       return;
     }
 
@@ -324,6 +338,20 @@ export function Game() {
     }
   }
 
+  /** Quick rematch — redeals the current game exactly as-is, no editing. */
+  async function playAgain() {
+    if (!room || !game) return;
+    setPlayingAgain(true);
+    setActionError('');
+    try {
+      await dealGame(room, game, orderedPlayers);
+    } catch (e) {
+      setActionError(getErrorMessage(e, 'Failed to start a new round. Try again.'));
+    } finally {
+      setPlayingAgain(false);
+    }
+  }
+
   // --- Actions ---
 
   async function drawFromDeck() {
@@ -335,17 +363,13 @@ export function Game() {
     if (game?.showBlackjackControls) {
       const value = blackjackValue(newHand);
       const busted = value > 21;
-      const roomUpdate: Record<string, unknown> = {
-        deck: remainingDeck,
-        action_log: appendLog(room.action_log, busted
-          ? `${myPlayer.name} hit and busted with ${value}`
-          : `${myPlayer.name} hit — now at ${value}`),
-      };
+      const roomUpdate: Record<string, unknown> = { deck: remainingDeck };
       if (busted) roomUpdate.current_turn = nextPlayerInOrder(orderedPlayers, myPlayerId ?? null);
       await Promise.all([
         supabase.from('rooms').update(roomUpdate).eq('id', room.id),
         supabase.from('players').update({ hand: newHand, is_standing: busted }).eq('id', myPlayer.id),
       ]);
+      await logAction(busted ? `${myPlayer.name} hit and busted with ${value}` : `${myPlayer.name} hit — now at ${value}`);
       return;
     }
 
@@ -399,14 +423,13 @@ export function Game() {
     if (!room || !myPlayer) return;
     setActionError('');
     const nextTurn = nextPlayerInOrder(orderedPlayers, myPlayerId ?? null);
-    const roomUpdate: Record<string, unknown> = { current_turn: nextTurn };
-    if (game?.showBlackjackControls) {
-      roomUpdate.action_log = appendLog(room.action_log, `${myPlayer.name} stood on ${blackjackValue(myPlayer.hand)}`);
-    }
     await Promise.all([
       supabase.from('players').update({ is_standing: true }).eq('id', myPlayer.id),
-      supabase.from('rooms').update(roomUpdate).eq('id', room.id),
+      supabase.from('rooms').update({ current_turn: nextTurn }).eq('id', room.id),
     ]);
+    if (game?.showBlackjackControls) {
+      await logAction(`${myPlayer.name} stood on ${blackjackValue(myPlayer.hand)}`);
+    }
   }
 
   async function revealDealerHand() {
@@ -493,9 +516,14 @@ export function Game() {
             Rules
           </button>
           {isDealer && (
-            <button onClick={openSettings} className="text-white/40 hover:text-white text-xs">
-              Settings
-            </button>
+            <>
+              <button onClick={playAgain} disabled={playingAgain} className="text-white/40 hover:text-white text-xs disabled:opacity-50">
+                {playingAgain ? 'Dealing…' : 'Play Again'}
+              </button>
+              <button onClick={openSettings} className="text-white/40 hover:text-white text-xs">
+                Settings
+              </button>
+            </>
           )}
         </div>
         <div className="text-right">
@@ -569,6 +597,15 @@ export function Game() {
               {blackjackValue(dealer.hand) > 21 && <span className="text-red-400 font-semibold">Bust</span>}
             </div>
           </div>
+          {isDealer && (
+            <button
+              onClick={playAgain}
+              disabled={playingAgain}
+              className="w-full mt-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-amber-950 font-bold py-2 rounded-xl text-sm transition-colors"
+            >
+              {playingAgain ? 'Dealing…' : 'Play Again'}
+            </button>
+          )}
         </div>
       )}
 
@@ -605,7 +642,7 @@ export function Game() {
                       <PlayingCard key={card.id + i} card={card} size="sm" />
                     ))}
                     {player.hand.length > 4 && (
-                      <div className="w-9 h-14 flex items-center justify-center text-white/40 text-xs">
+                      <div className="w-[4.5rem] h-28 flex items-center justify-center text-white/40 text-sm">
                         +{player.hand.length - 4}
                       </div>
                     )}
@@ -649,11 +686,11 @@ export function Game() {
             disabled={!canAct || (room?.deck.length ?? 0) === 0}
             className="flex flex-col items-center gap-1 disabled:opacity-40"
           >
-            <div className={`w-14 h-20 rounded-lg border-2 border-blue-600 bg-blue-800 flex items-center justify-center shadow-lg
+            <div className={`w-28 h-40 rounded-lg border-2 border-blue-600 bg-blue-800 flex items-center justify-center shadow-lg
               ${canAct && (room?.deck.length ?? 0) > 0 ? 'hover:border-blue-400 cursor-pointer' : 'cursor-default'}
               card-back-pattern`}
             >
-              <span className="text-white/40 text-xs font-bold">{room?.deck.length ?? 0}</span>
+              <span className="text-white/40 text-sm font-bold">{room?.deck.length ?? 0}</span>
             </div>
             <span className="text-white/40 text-xs">Draw</span>
           </button>
@@ -666,8 +703,8 @@ export function Game() {
                 <PlayingCard card={topDiscard} size="md" />
               </div>
             ) : (
-              <div className="w-14 h-20 rounded-lg border-2 border-dashed border-white/20 flex items-center justify-center">
-                <span className="text-white/20 text-xs">Empty</span>
+              <div className="w-28 h-40 rounded-lg border-2 border-dashed border-white/20 flex items-center justify-center">
+                <span className="text-white/20 text-sm">Empty</span>
               </div>
             )}
             <span className="text-white/40 text-xs">

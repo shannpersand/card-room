@@ -14,9 +14,15 @@ export function PlayingCard({ card, isOwner = false, selected = false, onClick, 
   const isRed = card.suit === 'hearts' || card.suit === 'diamonds';
 
   const sizeClasses = {
-    sm: 'w-9 h-14 text-xs',
-    md: 'w-14 h-20 text-sm',
-    lg: 'w-16 h-24 text-base',
+    sm: 'w-[4.5rem] h-28',
+    md: 'w-28 h-40',
+    lg: 'w-32 h-48',
+  }[size];
+
+  const faceTextClasses = {
+    sm: { rank: 'text-base', suit: 'text-2xl' },
+    md: { rank: 'text-lg', suit: 'text-3xl' },
+    lg: { rank: 'text-xl', suit: 'text-4xl' },
   }[size];
 
   const baseClasses = `
@@ -42,12 +48,12 @@ export function PlayingCard({ card, isOwner = false, selected = false, onClick, 
       onClick={onClick}
     >
       <div className="font-bold leading-none font-card">
-        <div className="text-sm leading-none">{card.rank}</div>
+        <div className={`${faceTextClasses.rank} leading-none`}>{card.rank}</div>
         <div className="leading-none">{SUIT_SYMBOLS[card.suit]}</div>
       </div>
-      <div className="self-center text-xl leading-none">{SUIT_SYMBOLS[card.suit]}</div>
+      <div className={`self-center ${faceTextClasses.suit} leading-none`}>{SUIT_SYMBOLS[card.suit]}</div>
       <div className="font-bold leading-none font-card rotate-180 self-end">
-        <div className="text-sm leading-none">{card.rank}</div>
+        <div className={`${faceTextClasses.rank} leading-none`}>{card.rank}</div>
         <div className="leading-none">{SUIT_SYMBOLS[card.suit]}</div>
       </div>
     </div>
