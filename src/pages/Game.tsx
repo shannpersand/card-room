@@ -4,7 +4,7 @@ import { supabase, getErrorMessage, getEdgeFunctionErrorMessage } from '@/lib/su
 import { resolveGame, dealGame, toEditableConfig } from '@/lib/games';
 import { nextPlayerInOrder, blackjackValue, RANKS } from '@/lib/deck';
 import { PlayingCard } from '@/components/PlayingCard';
-import { BACK_COLORS, resolveBackColorHex, type BackColorKey } from '@/lib/cardArt';
+import { BACK_COLORS, type BackColorKey } from '@/lib/cardArt';
 import type { Room, Player, Card, HoldemStage, Rank, GeneratedGameConfig, DealPlan } from '@/types';
 
 type PendingMode = 'freeplay' | 'blackjack' | 'holdem' | 'gofish';
@@ -356,11 +356,9 @@ export function Game() {
   /** Cosmetic only, so it applies instantly rather than waiting for a redeal. */
   async function setBackColor(color: BackColorKey) {
     if (!room) return;
-    try {
-      await supabase.from('rooms').update({ back_color: color }).eq('id', room.id);
-    } catch (e) {
-      setSettingsError(getErrorMessage(e, 'Failed to change card back color.'));
-    }
+    setSettingsError('');
+    const { error } = await supabase.from('rooms').update({ back_color: color }).eq('id', room.id);
+    if (error) setSettingsError(getErrorMessage(error, 'Failed to change card back color.'));
   }
 
   // --- Actions ---
@@ -695,17 +693,14 @@ export function Game() {
           <button
             onClick={canAct ? drawFromDeck : undefined}
             disabled={!canAct || (room?.deck.length ?? 0) === 0}
-            className="flex flex-col items-center gap-1 disabled:opacity-40"
+            className="flex flex-col items-center gap-1"
           >
-            <div
-              className={`w-28 h-40 rounded-lg border-2 flex items-center justify-center shadow-lg
-                ${canAct && (room?.deck.length ?? 0) > 0 ? 'cursor-pointer' : 'cursor-default'}
-                card-back-pattern`}
-              style={{ backgroundColor: resolveBackColorHex(room?.back_color), borderColor: resolveBackColorHex(room?.back_color) }}
-            >
-              <span className="text-white/40 text-sm font-bold">{room?.deck.length ?? 0}</span>
-            </div>
-            <span className="text-white/40 text-xs">Draw</span>
+            <PlayingCard
+              card={{ id: 'draw-pile', rank: 'A', suit: 'spades', faceUp: false }}
+              size="md"
+              backColor={room?.back_color}
+            />
+            <span className="text-white/40 text-xs">Draw · {room?.deck.length ?? 0}</span>
           </button>
 
           {/* Discard pile / draw from discard */}
