@@ -14,10 +14,11 @@ const SUIT_LETTER: Record<Suit, string> = { spades: 's', hearts: 'h', clubs: 'c'
 
 /** Custom card art URL for a given card, or undefined if that file hasn't been added yet. */
 export function cardFrontUrl(card: Card): string | undefined {
+  if (card.rank === 'Joker') return urlByName['joker'];
   return urlByName[`${card.rank}${SUIT_LETTER[card.suit]}`];
 }
 
-/** Custom joker art URL — not currently dealt by any game mode, kept for future use. */
+/** Custom joker art URL, dealt by Golf. */
 export const jokerUrl: string | undefined = urlByName['joker'];
 
 // The back is rendered inline (not as an <img>) so its background color can be swapped

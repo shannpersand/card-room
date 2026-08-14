@@ -26,10 +26,13 @@ export function PlayingCard({ card, isOwner = false, selected = false, onClick, 
     return () => { cancelled = true; };
   }, [showFace, backColor]);
 
+  // Height is derived from width via the card art's exact aspect ratio (177.84 × 249.84,
+  // shared by every card SVG including the back) instead of a hardcoded height class —
+  // that way the box never letterboxes the image inside it.
   const sizeClasses = {
-    sm: 'w-[4.5rem] h-28',
-    md: 'w-28 h-40',
-    lg: 'w-32 h-48',
+    sm: 'w-[4.5rem] aspect-[177.84/249.84]',
+    md: 'w-28 aspect-[177.84/249.84]',
+    lg: 'w-32 aspect-[177.84/249.84]',
   }[size];
 
   const faceTextClasses = {
@@ -39,7 +42,7 @@ export function PlayingCard({ card, isOwner = false, selected = false, onClick, 
   }[size];
 
   const baseClasses = `
-    relative inline-flex flex-col select-none rounded-lg border shadow-md overflow-hidden
+    relative inline-flex flex-col select-none rounded border shadow-md overflow-hidden
     transition-all duration-150
     ${onClick ? 'cursor-pointer' : 'cursor-default'}
     ${selected ? '-translate-y-3 ring-2 ring-yellow-400 shadow-xl' : onClick ? 'hover:-translate-y-1 hover:shadow-lg' : ''}
@@ -74,7 +77,7 @@ export function PlayingCard({ card, isOwner = false, selected = false, onClick, 
   // Falls back to the original CSS-drawn face if custom art is missing for this card.
   return (
     <div
-      className={`${baseClasses} bg-white border-gray-200 justify-between p-1 ${isRed ? 'text-red-600' : 'text-gray-900'}`}
+      className={`${baseClasses} bg-white border-gray-200 justify-between px-1 py-0.5 ${isRed ? 'text-red-600' : 'text-gray-900'}`}
       onClick={onClick}
     >
       <div className="font-bold leading-none font-card">

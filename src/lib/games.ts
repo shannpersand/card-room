@@ -1,6 +1,6 @@
-import { createDeck, shuffle } from './deck';
+import { createDeck, createGolfJokers, shuffle } from './deck';
 import { supabase } from './supabase';
-import type { Card, GeneratedGameConfig, Player, Room } from '@/types';
+import type { Card, GeneratedGameConfig, GolfZeroRank, Player, Room } from '@/types';
 
 export interface GameDeal {
   hands: Card[][];
@@ -21,6 +21,9 @@ export interface GameConfig {
   showBlackjackControls: boolean;
   showHoldemControls: boolean;
   isGoFishLike?: boolean;
+  isGolfLike?: boolean;
+  golfZeroRank?: GolfZeroRank;
+  golfPairsCancel?: boolean;
   deal(playerCount: number): GameDeal;
 }
 
@@ -155,6 +158,34 @@ export const GAMES: GameConfig[] = [
     },
   },
   {
+    id: 'golf',
+    name: 'Golf',
+    description: '4-card grid — lowest score wins',
+    minPlayers: 2,
+    maxPlayers: 6,
+    turnBased: true,
+    canDrawFromDiscard: true,
+    showBlackjackControls: false,
+    showHoldemControls: false,
+    isGolfLike: true,
+    golfZeroRank: 'Q',
+    golfPairsCancel: false,
+    instructions:
+      "Each player gets 4 cards face down in a 2×2 grid. At the start, you may peek at exactly 2 of your own 4 cards — tap one to flip it up, tap it again to flip it back down, and it's locked after that. On your turn, tap the draw or discard pile, then either tap one of your 4 cards to swap it in (the replaced card goes face up to the discard pile, and the new one goes in face down without you seeing it) or discard the drawn card outright and keep your grid as-is. Opponents' cards stay hidden the whole game. When you're ready, tap Knock instead of drawing — everyone else gets exactly one more turn, then every hand is revealed and scored automatically. Queens = 0 points (a Settings toggle can switch this to Kings), 2s = -2, Jokers = 10, Aces = 1, other number cards = face value, remaining face cards = 10. A Settings toggle can also make two matching ranks in the same row or column (not diagonal) cancel out to 0. Lowest total wins.",
+    deal(playerCount) {
+      const deck = shuffle([...createDeck(), ...createGolfJokers()]);
+      let i = 0;
+      const hands: Card[][] = Array.from({ length: playerCount }, () => []);
+      for (let round = 0; round < 4; round++) {
+        for (let p = 0; p < playerCount; p++) {
+          hands[p].push({ ...deck[i++], faceUp: false });
+        }
+      }
+      const discardPile: Card[] = [{ ...deck[i++], faceUp: true }];
+      return { hands, communityCards: [], discardPile, remainingDeck: deck.slice(i) };
+    },
+  },
+  {
     id: 'crazy-eights',
     name: 'Crazy Eights',
     description: 'Match by rank or suit — 8s are wild',
@@ -217,7 +248,7 @@ export function dealFromGeneratedConfig(config: GeneratedGameConfig, playerCount
   }
 
   // Generic play/discard mode, parameterized by dealPlan
-  const deck = shuffle(createDeck());
+  const deck = shuffle(config.isGolfLike ? [...createDeck(), ...createGolfJokers()] : createDeck());
   const hands: Card[][] = Array.from({ length: playerCount }, () => []);
   let i = 0;
   if (config.dealPlan.splitEntireDeck) {
@@ -283,6 +314,7 @@ export async function dealGame(
     holdem_stage: game.showHoldemControls ? 'preflop' : null,
     custom_game: isCustom ? (game as GeneratedGameConfig) : null,
     action_log: [],
+    golf_knocked_by: null,
   }).eq('id', room.id);
 }
 
@@ -305,11 +337,14 @@ export function toEditableConfig(game: GameConfig | GeneratedGameConfig): Genera
     showBlackjackControls: game.showBlackjackControls,
     showHoldemControls: game.showHoldemControls,
     isGoFishLike: !!game.isGoFishLike,
+    isGolfLike: !!game.isGolfLike,
+    golfZeroRank: game.golfZeroRank ?? 'Q',
+    golfPairsCancel: !!game.golfPairsCancel,
     dealPlan: {
-      cardsPerPlayer: 5,
+      cardsPerPlayer: game.id === 'golf' ? 4 : 5,
       splitEntireDeck: game.id === 'war',
-      discardPileStart: game.id === 'rummy' || game.id === 'crazy-eights',
-      handFaceUp: game.id !== 'war',
+      discardPileStart: game.id === 'rummy' || game.id === 'crazy-eights' || game.id === 'golf',
+      handFaceUp: game.id !== 'war' && game.id !== 'golf',
     },
     clarifyingOptions: [],
   };

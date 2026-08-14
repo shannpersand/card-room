@@ -1,5 +1,8 @@
 export type Suit = 'spades' | 'hearts' | 'diamonds' | 'clubs';
-export type Rank = '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'A';
+export type Rank = '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'A' | 'Joker';
+
+/** Golf: which court-card rank is worth 0 points. */
+export type GolfZeroRank = 'Q' | 'K';
 
 export interface Card {
   id: string;      // e.g. 'A-spades' — unique across a fresh deck
@@ -49,6 +52,9 @@ export interface GeneratedGameConfig {
   showBlackjackControls: boolean;
   showHoldemControls: boolean;
   isGoFishLike: boolean;
+  isGolfLike: boolean;
+  golfZeroRank: GolfZeroRank;
+  golfPairsCancel: boolean;
   dealPlan: DealPlan;
   clarifyingOptions: ClarifyingOption[];
 }
@@ -74,5 +80,6 @@ export interface Room {
   custom_game: GeneratedGameConfig | null;
   action_log: string[];
   back_color: string;
+  golf_knocked_by: string | null;
   created_at: string;
 }

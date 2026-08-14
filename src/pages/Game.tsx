@@ -2,12 +2,12 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase, getErrorMessage, getEdgeFunctionErrorMessage } from '@/lib/supabase';
 import { resolveGame, dealGame, toEditableConfig } from '@/lib/games';
-import { nextPlayerInOrder, blackjackValue, RANKS } from '@/lib/deck';
+import { nextPlayerInOrder, blackjackValue, golfHandValue, RANKS, SUIT_SYMBOLS } from '@/lib/deck';
 import { PlayingCard } from '@/components/PlayingCard';
 import { BACK_COLORS, type BackColorKey } from '@/lib/cardArt';
 import type { Room, Player, Card, HoldemStage, Rank, GeneratedGameConfig, DealPlan } from '@/types';
 
-type PendingMode = 'freeplay' | 'blackjack' | 'holdem' | 'gofish';
+type PendingMode = 'freeplay' | 'blackjack' | 'holdem' | 'gofish' | 'golf';
 
 export function Game() {
   const { code } = useParams<{ code: string }>();
@@ -34,6 +34,13 @@ export function Game() {
   const [settingsError, setSettingsError] = useState('');
   const [playingAgain, setPlayingAgain] = useState(false);
 
+  // --- Golf: local-only peek state (never synced, so opponents never see it) + pending
+  // draw-and-replace flow ---
+  const [golfPeekedNow, setGolfPeekedNow] = useState<Set<string>>(new Set());
+  const [golfPeekUsed, setGolfPeekUsed] = useState<Set<string>>(new Set());
+  const [golfPendingDraw, setGolfPendingDraw] = useState<{ card: Card; source: 'deck' | 'discard' } | null>(null);
+  const prevDeckLenRef = useRef<number | null>(null);
+
   const myPlayerId = localStorage.getItem('cardroom_player_id');
 
   const orderedPlayers = players.filter(p => p.is_active).sort((a, b) => a.seat_order - b.seat_order);
@@ -50,6 +57,11 @@ export function Game() {
   const allBlackjackDone = !!game?.showBlackjackControls
     && orderedPlayers.length > 0
     && orderedPlayers.every(p => p.is_standing);
+  const golfRevealed = !!room?.golf_knocked_by
+    && orderedPlayers.length > 0
+    && orderedPlayers.every(p => p.hand.every(c => c.faceUp));
+  const golfScore = (hand: Card[]) =>
+    golfHandValue(hand, { zeroRank: game?.golfZeroRank, pairsCancel: game?.golfPairsCancel });
 
   function appendLog(current: string[] | null | undefined, entry: string): string[] {
     return [...(current ?? []), entry].slice(-30);
@@ -91,6 +103,19 @@ export function Game() {
   }, [code, navigate]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Golf: the deck only ever shrinks during a round — an increase means a fresh deal just
+  // landed, so reset the local peek budget and any in-flight draw.
+  useEffect(() => {
+    if (!room) return;
+    const len = room.deck.length;
+    if (prevDeckLenRef.current !== null && len > prevDeckLenRef.current) {
+      setGolfPeekedNow(new Set());
+      setGolfPeekUsed(new Set());
+      setGolfPendingDraw(null);
+    }
+    prevDeckLenRef.current = len;
+  }, [room?.deck.length]);
 
   useEffect(() => {
     if (!room?.id) return;
@@ -195,11 +220,12 @@ export function Game() {
     if (game?.canDrawFromDiscard && discardPile.length > 0) {
       const drawn = discardPile[discardPile.length - 1];
       discardPile = discardPile.slice(0, -1);
-      hand = [...hand, { ...drawn, faceUp: true }];
+      // Golf: cards in hand stay hidden until the final reveal, even the one just drawn.
+      hand = [...hand, { ...drawn, faceUp: !game?.isGolfLike }];
     } else if (deck.length > 0) {
       const [drawn, ...rest] = deck;
       deck = rest;
-      hand = [...hand, drawn];
+      hand = [...hand, game?.isGolfLike ? { ...drawn, faceUp: false } : drawn];
     }
 
     let communityCards = freshRoom.community_cards;
@@ -212,12 +238,23 @@ export function Game() {
     }
 
     const nextTurn = nextPlayerInOrder(orderedPlayers, bot.id);
-    await Promise.all([
-      supabase.from('players').update({ hand }).eq('id', bot.id),
+    // Golf: if this turn wraps back around to whoever knocked, the round ends — reveal every
+    // hand instead of just advancing the turn (bots never knock themselves, only humans do).
+    const revealing = game?.isGolfLike && !!freshRoom.golf_knocked_by && nextTurn === freshRoom.golf_knocked_by;
+    const writes: Promise<unknown>[] = [
+      supabase.from('players').update({ hand: revealing ? hand.map(c => ({ ...c, faceUp: true })) : hand }).eq('id', bot.id),
       supabase.from('rooms').update({
-        deck, discard_pile: discardPile, community_cards: communityCards, current_turn: nextTurn,
+        deck, discard_pile: discardPile, community_cards: communityCards,
+        current_turn: revealing ? null : nextTurn,
       }).eq('id', room.id),
-    ]);
+    ];
+    if (revealing) {
+      for (const p of orderedPlayers) {
+        if (p.id === bot.id) continue;
+        writes.push(supabase.from('players').update({ hand: p.hand.map(c => ({ ...c, faceUp: true })) }).eq('id', p.id));
+      }
+    }
+    await Promise.all(writes);
   }
 
   useEffect(() => {
@@ -254,6 +291,7 @@ export function Game() {
   const pendingMode: PendingMode = pendingConfig?.showBlackjackControls ? 'blackjack'
     : pendingConfig?.showHoldemControls ? 'holdem'
     : pendingConfig?.isGoFishLike ? 'gofish'
+    : pendingConfig?.isGolfLike ? 'golf'
     : 'freeplay';
 
   function openSettings() {
@@ -274,7 +312,12 @@ export function Game() {
         showBlackjackControls: newMode === 'blackjack',
         showHoldemControls: newMode === 'holdem',
         isGoFishLike: newMode === 'gofish',
+        isGolfLike: newMode === 'golf',
+        canDrawFromDiscard: newMode === 'golf' ? true : prev.canDrawFromDiscard,
         turnBased,
+        dealPlan: newMode === 'golf'
+          ? { ...prev.dealPlan, cardsPerPlayer: 4, discardPileStart: true, handFaceUp: false }
+          : prev.dealPlan,
       };
     });
   }
@@ -426,6 +469,101 @@ export function Game() {
       supabase.from('rooms').update({ discard_pile: newDiscard, current_turn: nextTurn }).eq('id', room.id),
       supabase.from('players').update({ hand: newHand }).eq('id', myPlayer.id),
     ]);
+  }
+
+  // --- Golf ---
+
+  async function golfDrawFromDeck() {
+    if (!room || !myPlayer || !canAct || golfPendingDraw || room.deck.length === 0) return;
+    setActionError('');
+    const [drawn, ...remainingDeck] = room.deck;
+    setGolfPendingDraw({ card: drawn, source: 'deck' });
+    await supabase.from('rooms').update({ deck: remainingDeck }).eq('id', room.id);
+  }
+
+  async function golfDrawFromDiscard() {
+    if (!room || !myPlayer || !canAct || golfPendingDraw || room.discard_pile.length === 0) return;
+    setActionError('');
+    const drawn = room.discard_pile.at(-1)!;
+    const remainingDiscard = room.discard_pile.slice(0, -1);
+    setGolfPendingDraw({ card: { ...drawn, faceUp: true }, source: 'discard' });
+    await supabase.from('rooms').update({ discard_pile: remainingDiscard }).eq('id', room.id);
+  }
+
+  /**
+   * Reveals every active player's hand — used when a turn wraps back around to whoever
+   * knocked. Pass `exceptPlayerId` when that player's own (changed) hand is being written
+   * separately in the same batch, so it isn't double-written here with stale data.
+   */
+  async function revealAllGolfHands(exceptPlayerId?: string) {
+    await Promise.all(
+      orderedPlayers
+        .filter(p => p.id !== exceptPlayerId)
+        .map(p => supabase.from('players').update({ hand: p.hand.map(c => ({ ...c, faceUp: true })) }).eq('id', p.id))
+    );
+  }
+
+  /** Swaps the pending drawn card into hand slot `idx`; the replaced card goes face up to discard. */
+  async function performGolfSwap(idx: number) {
+    if (!room || !myPlayer || !golfPendingDraw) return;
+    const oldCard = myPlayer.hand[idx];
+    const newHand = myPlayer.hand.map((c, i) => i === idx ? { ...golfPendingDraw.card, faceUp: false } : c);
+    const discarded = { ...oldCard, faceUp: true };
+    const newDiscard = [...room.discard_pile, discarded];
+    const nextTurn = nextPlayerInOrder(orderedPlayers, myPlayerId ?? null);
+    const revealing = !!room.golf_knocked_by && nextTurn === room.golf_knocked_by;
+    setGolfPendingDraw(null);
+    // The replaced card is gone — free its peek-tracking, but permanently count any in-progress
+    // peek as used so swapping mid-peek can't be used to dodge the two-peek budget.
+    setGolfPeekedNow(prev => { const n = new Set(prev); n.delete(oldCard.id); return n; });
+    setGolfPeekUsed(prev => new Set(prev).add(oldCard.id));
+    await Promise.all([
+      supabase.from('rooms').update({ discard_pile: newDiscard, current_turn: revealing ? null : nextTurn }).eq('id', room.id),
+      supabase.from('players').update({
+        hand: revealing ? newHand.map(c => ({ ...c, faceUp: true })) : newHand,
+      }).eq('id', myPlayer.id),
+      ...(revealing ? [revealAllGolfHands(myPlayer.id)] : []),
+    ]);
+  }
+
+  /** Declines the swap — the drawn card goes straight to discard and your hand stays as-is. */
+  async function golfDiscardDrawn() {
+    if (!room || !myPlayer || !golfPendingDraw) return;
+    const discarded = { ...golfPendingDraw.card, faceUp: true };
+    const newDiscard = [...room.discard_pile, discarded];
+    const nextTurn = nextPlayerInOrder(orderedPlayers, myPlayerId ?? null);
+    const revealing = !!room.golf_knocked_by && nextTurn === room.golf_knocked_by;
+    setGolfPendingDraw(null);
+    await Promise.all([
+      supabase.from('rooms').update({ discard_pile: newDiscard, current_turn: revealing ? null : nextTurn }).eq('id', room.id),
+      ...(revealing ? [revealAllGolfHands()] : []),
+    ]);
+  }
+
+  /** Ends your turn without drawing — everyone else gets exactly one more turn, then all hands reveal. */
+  async function golfKnock() {
+    if (!room || !myPlayer || !canAct || golfPendingDraw || room.golf_knocked_by) return;
+    setActionError('');
+    const nextTurn = nextPlayerInOrder(orderedPlayers, myPlayerId ?? null);
+    await supabase.from('rooms').update({ golf_knocked_by: myPlayer.id, current_turn: nextTurn }).eq('id', room.id);
+  }
+
+  function handleGolfCardClick(card: Card, idx: number) {
+    if (!myPlayer || golfRevealed) return;
+    // Peeking is a private action with no turn restriction; only the swap step is turn-gated,
+    // and golfPendingDraw can only be set on this client after it drew on its own turn.
+    if (golfPendingDraw) {
+      performGolfSwap(idx);
+      return;
+    }
+    if (golfPeekUsed.has(card.id)) return;
+    if (golfPeekedNow.has(card.id)) {
+      setGolfPeekedNow(prev => { const n = new Set(prev); n.delete(card.id); return n; });
+      setGolfPeekUsed(prev => new Set(prev).add(card.id));
+      return;
+    }
+    if (golfPeekedNow.size + golfPeekUsed.size >= 2) return;
+    setGolfPeekedNow(prev => new Set(prev).add(card.id));
   }
 
   async function stand() {
@@ -618,6 +756,36 @@ export function Game() {
         </div>
       )}
 
+      {/* Golf: round results, once the final round wraps back to whoever knocked */}
+      {game?.isGolfLike && golfRevealed && (
+        <div className="mx-4 mt-3 bg-amber-900/30 border border-amber-700/40 rounded-xl px-4 py-3">
+          <p className="text-amber-300 text-xs font-bold uppercase tracking-wide mb-2">Round Results</p>
+          <div className="flex flex-col gap-1">
+            {[...orderedPlayers]
+              .sort((a, b) => golfScore(a.hand) - golfScore(b.hand))
+              .map((p, i) => (
+                <div key={p.id} className="flex justify-between text-sm">
+                  <span className={i === 0 ? 'text-emerald-400 font-semibold' : 'text-white/80'}>
+                    {p.name}{p.id === room?.golf_knocked_by ? ' (knocked)' : ''}
+                  </span>
+                  <span className={i === 0 ? 'text-emerald-400 font-semibold' : 'text-white/60'}>
+                    {golfScore(p.hand)}
+                  </span>
+                </div>
+              ))}
+          </div>
+          {isDealer && (
+            <button
+              onClick={playAgain}
+              disabled={playingAgain}
+              className="w-full mt-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-amber-950 font-bold py-2 rounded-xl text-sm transition-colors"
+            >
+              {playingAgain ? 'Dealing…' : 'Play Again'}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Blackjack: action history */}
       {game?.showBlackjackControls && (room?.action_log?.length ?? 0) > 0 && (
         <div className="mx-4 mt-3 bg-black/20 border border-white/10 rounded-xl px-3 py-2 max-h-28 overflow-y-auto">
@@ -646,16 +814,24 @@ export function Game() {
                   {player.id === dealer?.id && <span className="text-amber-400 text-xs">★</span>}
                 </div>
                 {player.hand.length > 0 ? (
-                  <div className="flex gap-1">
-                    {player.hand.slice(0, 4).map((card, i) => (
-                      <PlayingCard key={card.id + i} card={card} size="sm" backColor={room?.back_color} />
-                    ))}
-                    {player.hand.length > 4 && (
-                      <div className="w-[4.5rem] h-28 flex items-center justify-center text-white/40 text-sm">
-                        +{player.hand.length - 4}
-                      </div>
-                    )}
-                  </div>
+                  game?.isGolfLike ? (
+                    <div className="grid grid-cols-2 gap-1 w-fit">
+                      {player.hand.slice(0, 4).map((card, i) => (
+                        <PlayingCard key={card.id + i} card={card} size="sm" backColor={room?.back_color} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex gap-1">
+                      {player.hand.slice(0, 4).map((card, i) => (
+                        <PlayingCard key={card.id + i} card={card} size="sm" backColor={room?.back_color} />
+                      ))}
+                      {player.hand.length > 4 && (
+                        <div className="w-[4.5rem] aspect-[177.84/249.84] flex items-center justify-center text-white/40 text-sm">
+                          +{player.hand.length - 4}
+                        </div>
+                      )}
+                    </div>
+                  )
                 ) : (
                   <span className="text-white/30 text-xs">No cards</span>
                 )}
@@ -691,8 +867,12 @@ export function Game() {
         <div className="flex gap-4 items-center">
           {/* Draw pile */}
           <button
-            onClick={canAct ? drawFromDeck : undefined}
-            disabled={!canAct || (room?.deck.length ?? 0) === 0}
+            onClick={
+              !canAct ? undefined
+              : game?.isGolfLike ? (golfPendingDraw ? undefined : golfDrawFromDeck)
+              : drawFromDeck
+            }
+            disabled={!canAct || (room?.deck.length ?? 0) === 0 || (game?.isGolfLike && !!golfPendingDraw)}
             className="flex flex-col items-center gap-1"
           >
             <PlayingCard
@@ -706,12 +886,17 @@ export function Game() {
           {/* Discard pile / draw from discard */}
           <div className="flex flex-col items-center gap-1">
             {topDiscard ? (
-              <div onClick={game?.canDrawFromDiscard && canAct ? drawFromDiscard : undefined}
-                className={game?.canDrawFromDiscard && canAct ? 'cursor-pointer' : 'cursor-default'}>
+              <div
+                onClick={
+                  !(game?.canDrawFromDiscard && canAct) ? undefined
+                  : game?.isGolfLike ? (golfPendingDraw ? undefined : golfDrawFromDiscard)
+                  : drawFromDiscard
+                }
+                className={game?.canDrawFromDiscard && canAct && !(game?.isGolfLike && golfPendingDraw) ? 'cursor-pointer' : 'cursor-default'}>
                 <PlayingCard card={topDiscard} size="md" backColor={room?.back_color} />
               </div>
             ) : (
-              <div className="w-28 h-40 rounded-lg border-2 border-dashed border-white/20 flex items-center justify-center">
+              <div className="w-28 aspect-[177.84/249.84] rounded-lg border-2 border-dashed border-white/20 flex items-center justify-center">
                 <span className="text-white/20 text-sm">Empty</span>
               </div>
             )}
@@ -738,23 +923,51 @@ export function Game() {
               {blackjackValue(myPlayer.hand) > 21 ? 'BUSTED' : 'STANDING'}
             </span>
           )}
+          {game?.isGolfLike && !golfRevealed && (
+            <span className="text-white/30 text-xs">
+              {golfPendingDraw ? 'Tap a card to replace it' : `Peeks left: ${Math.max(0, 2 - golfPeekUsed.size - golfPeekedNow.size)}`}
+            </span>
+          )}
         </div>
-        {(myPlayer?.hand.length ?? 0) > 0 ? (
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-1">
-            {myPlayer!.hand.map(card => (
-              <PlayingCard
-                key={card.id}
-                card={card}
-                isOwner
-                selected={selectedCardId === card.id}
-                size="lg"
-                onClick={() => {
-                  setSelectedCardId(prev => prev === card.id ? null : card.id);
-                  setActionError('');
-                }}
-              />
-            ))}
+        {golfPendingDraw && (
+          <div className="flex items-center gap-2 mb-2">
+            <PlayingCard card={{ ...golfPendingDraw.card, faceUp: true }} size="sm" />
+            <span className="text-amber-300 text-xs font-medium">
+              Drew {golfPendingDraw.card.rank}{SUIT_SYMBOLS[golfPendingDraw.card.suit]} — tap one of your cards below
+            </span>
           </div>
+        )}
+        {(myPlayer?.hand.length ?? 0) > 0 ? (
+          game?.isGolfLike ? (
+            <div className="grid grid-cols-2 gap-2 w-fit mx-auto pb-1 pt-1">
+              {myPlayer!.hand.map((card, idx) => (
+                <PlayingCard
+                  key={card.id}
+                  card={{ ...card, faceUp: card.faceUp || golfPeekedNow.has(card.id) }}
+                  isOwner={false}
+                  size="lg"
+                  backColor={room?.back_color}
+                  onClick={() => handleGolfCardClick(card, idx)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-1">
+              {myPlayer!.hand.map(card => (
+                <PlayingCard
+                  key={card.id}
+                  card={card}
+                  isOwner
+                  selected={selectedCardId === card.id}
+                  size="lg"
+                  onClick={() => {
+                    setSelectedCardId(prev => prev === card.id ? null : card.id);
+                    setActionError('');
+                  }}
+                />
+              ))}
+            </div>
+          )
         ) : (
           <p className="text-white/30 text-sm py-3">No cards in hand</p>
         )}
@@ -810,6 +1023,40 @@ export function Game() {
               Ask for Rank
             </button>
           </div>
+        ) : game?.isGolfLike ? (
+          // Golf controls — drawing/replacing happens by tapping the piles and grid directly
+          <>
+            {room?.golf_knocked_by && !golfRevealed && (
+              <p className="text-amber-300 text-xs text-center mb-2">
+                {room.golf_knocked_by === myPlayerId ? 'You knocked' : `${players.find(p => p.id === room.golf_knocked_by)?.name ?? 'A player'} knocked`} — final round in progress
+              </p>
+            )}
+            {golfRevealed ? (
+              <p className="text-white/40 text-sm text-center py-2">Round over — see results above.</p>
+            ) : golfPendingDraw ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-white/60 text-sm text-center font-medium">Tap one of your cards to replace it</p>
+                <button
+                  onClick={golfDiscardDrawn}
+                  className="w-full bg-white/10 hover:bg-white/20 text-white font-semibold py-2 rounded-xl text-sm transition-colors"
+                >
+                  Discard drawn card instead
+                </button>
+              </div>
+            ) : canAct ? (
+              <div className="flex gap-2 items-center">
+                <p className="flex-1 text-white/40 text-xs">Tap the draw or discard pile to draw a card</p>
+                {!room?.golf_knocked_by && (
+                  <button
+                    onClick={golfKnock}
+                    className="shrink-0 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold px-4 py-2 rounded-xl text-sm transition-colors"
+                  >
+                    Knock
+                  </button>
+                )}
+              </div>
+            ) : null}
+          </>
         ) : (
           // Default controls
           <div className="flex gap-2">
@@ -833,7 +1080,7 @@ export function Game() {
         {!canAct && game?.turnBased && !(game?.showBlackjackControls && myPlayer?.is_standing) && (
           <p className="text-white/30 text-xs text-center mt-2">Wait for your turn…</p>
         )}
-        {!selectedCard && canAct && !game?.showBlackjackControls && !game?.isGoFishLike && (
+        {!selectedCard && canAct && !game?.showBlackjackControls && !game?.isGoFishLike && !game?.isGolfLike && (
           <p className="text-white/30 text-xs text-center mt-2">Tap a card to select it</p>
         )}
       </div>
@@ -913,10 +1160,36 @@ export function Game() {
               >
                 <option value="freeplay" className="bg-emerald-950">Free play (play/discard)</option>
                 <option value="blackjack" className="bg-emerald-950">Blackjack (hit/stand)</option>
-                <option value="holdem" className="bg-emerald-950">Hold'em (community cards)</option>
-                <option value="gofish" className="bg-emerald-950">Go Fish (ask for cards)</option>
+                <option value="golf" className="bg-emerald-950">Golf (4-card grid)</option>
               </select>
             </div>
+
+            {/* Golf-specific settings — separate from the freeplay/deal-plan fields below,
+                since those would let a dealer break the fixed 4-card 2x2 grid Golf assumes. */}
+            {pendingMode === 'golf' && (
+              <div className="mb-4 flex flex-col gap-3">
+                <div>
+                  <label className="text-white/60 text-sm mb-2 block">Zero-point card</label>
+                  <div className="flex gap-2">
+                    {(['Q', 'K'] as const).map(rank => (
+                      <button
+                        key={rank}
+                        onClick={() => updateField('golfZeroRank', rank)}
+                        className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors
+                          ${pendingConfig.golfZeroRank === rank ? 'bg-emerald-600 text-white' : 'bg-white/10 text-white/60 hover:text-white'}`}
+                      >
+                        {rank === 'Q' ? 'Queens' : 'Kings'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-white/80 text-sm">
+                  <input type="checkbox" checked={pendingConfig.golfPairsCancel}
+                    onChange={e => updateField('golfPairsCancel', e.target.checked)} />
+                  Matching pairs in a row or column cancel to 0
+                </label>
+              </div>
+            )}
 
             {pendingMode === 'freeplay' && (
               <div className="mb-4 flex flex-col gap-3">

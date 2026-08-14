@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS public.rooms (
   custom_game     jsonb,
   action_log      jsonb NOT NULL DEFAULT '[]',
   back_color      text NOT NULL DEFAULT 'blue',
+  golf_knocked_by uuid,
   created_at      timestamptz DEFAULT now()
 );
 
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS public.rooms (
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS custom_game jsonb;
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS action_log jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS back_color text NOT NULL DEFAULT 'blue';
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS golf_knocked_by uuid;
 
 -- Players table
 CREATE TABLE IF NOT EXISTS public.players (

@@ -4,6 +4,12 @@ import path from 'path';
 
 export default defineConfig({
   base: '/card-room/',
+  // Fail fast instead of silently picking another port when 5173 is taken — a stale
+  // server on a fallback port is how a browser tab ends up talking to the wrong process.
+  server: {
+    port: 5173,
+    strictPort: true,
+  },
   plugins: [react()],
   resolve: {
     alias: {
