@@ -241,7 +241,7 @@ export function Game() {
     // Golf: if this turn wraps back around to whoever knocked, the round ends — reveal every
     // hand instead of just advancing the turn (bots never knock themselves, only humans do).
     const revealing = game?.isGolfLike && !!freshRoom.golf_knocked_by && nextTurn === freshRoom.golf_knocked_by;
-    const writes: Promise<unknown>[] = [
+    const writes: PromiseLike<unknown>[] = [
       supabase.from('players').update({ hand: revealing ? hand.map(c => ({ ...c, faceUp: true })) : hand }).eq('id', bot.id),
       supabase.from('rooms').update({
         deck, discard_pile: discardPile, community_cards: communityCards,
