@@ -2,13 +2,12 @@ name: Keep Supabase project active
 
 # Supabase free-tier projects pause after 7 days of low activity. Their own docs say
 # "a few user requests to the database each day over the previous week" is what keeps a
-# project from being paused — a twice-weekly ping (the original schedule here) does NOT
-# satisfy that and the project got paused anyway despite every ping succeeding. Ping daily
-# instead so there's no multi-day gap in activity.
+# project from being paused. A single daily ping still triggered an inactivity warning,
+# so "a few" apparently means more than one — ping several times a day instead.
 
 on:
   schedule:
-    - cron: "0 8 * * *" # every day, 08:00 UTC
+    - cron: "0 6,12,18 * * *" # three times a day, 06:00/12:00/18:00 UTC
   workflow_dispatch:
 
 jobs:
