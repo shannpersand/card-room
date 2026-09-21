@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, getErrorMessage } from '@/lib/supabase';
 import { generateRoomCode } from '@/lib/deck';
@@ -90,11 +90,17 @@ export function Landing() {
   const navigate = useNavigate();
   const { themeKey, theme, setTheme } = useTheme();
   const t = theme.landing;
-  const [name, setName] = useState(() => localStorage.getItem('cardroom_name') ?? generateFunName());
+  const [name, setName] = useState(() => localStorage.getItem('cardroom_name') || generateFunName());
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<'home' | 'join'>('home');
+
+  // Remembers whatever's currently in the field — typed or generated — as "last used",
+  // so next visit picks up right where this one left off instead of always regenerating.
+  useEffect(() => {
+    localStorage.setItem('cardroom_name', name);
+  }, [name]);
 
   const savedName = name.trim();
 
@@ -127,7 +133,6 @@ export function Landing() {
         .single();
       if (playerErr) throw playerErr;
 
-      localStorage.setItem('cardroom_name', playerName);
       localStorage.setItem('cardroom_player_id', player.id);
       localStorage.setItem('cardroom_room_code', code);
       navigate(`/lobby/${code}`);
@@ -172,7 +177,6 @@ export function Landing() {
       ]);
       if (botsErr) throw botsErr;
 
-      localStorage.setItem('cardroom_name', playerName);
       localStorage.setItem('cardroom_player_id', player.id);
       localStorage.setItem('cardroom_room_code', code);
       navigate(`/lobby/${code}`);
@@ -211,7 +215,6 @@ export function Landing() {
           .maybeSingle();
         if (existing) {
           await supabase.from('players').update({ is_active: true, last_seen: new Date().toISOString() }).eq('id', existing.id);
-          localStorage.setItem('cardroom_name', playerName);
           navigate(`/lobby/${code}`);
           return;
         }
@@ -233,7 +236,6 @@ export function Landing() {
         .single();
       if (playerErr) throw playerErr;
 
-      localStorage.setItem('cardroom_name', playerName);
       localStorage.setItem('cardroom_player_id', player.id);
       localStorage.setItem('cardroom_room_code', code);
       navigate(`/lobby/${code}`);
