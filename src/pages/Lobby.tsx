@@ -9,7 +9,7 @@ export function Lobby() {
   const navigate = useNavigate();
   const [room, setRoom] = useState<Room | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [selectedGameId, setSelectedGameId] = useState('texas-holdem');
+  const [selectedGameId, setSelectedGameId] = useState('blackjack');
   const [loading, setLoading] = useState(true);
   const [dealing, setDealing] = useState(false);
   const [error, setError] = useState('');

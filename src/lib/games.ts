@@ -27,7 +27,7 @@ export interface GameConfig {
   deal(playerCount: number): GameDeal;
 }
 
-export const GAMES: GameConfig[] = [
+const ALL_GAMES: GameConfig[] = [
   {
     id: 'texas-holdem',
     name: "Texas Hold'em",
@@ -214,6 +214,11 @@ export const GAMES: GameConfig[] = [
     },
   },
 ];
+
+// Trimmed to just these two presets for now — the rest are still fully defined above
+// in ALL_GAMES, so restoring one is just adding its id back to this filter.
+const ENABLED_GAME_IDS = ['blackjack', 'golf'];
+export const GAMES: GameConfig[] = ALL_GAMES.filter(g => ENABLED_GAME_IDS.includes(g.id));
 
 export const getGame = (id: string): GameConfig | undefined => GAMES.find(g => g.id === id);
 

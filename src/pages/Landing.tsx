@@ -90,7 +90,7 @@ export function Landing() {
   const navigate = useNavigate();
   const { themeKey, theme, setTheme } = useTheme();
   const t = theme.landing;
-  const [name, setName] = useState(() => localStorage.getItem('cardroom_name') ?? '');
+  const [name, setName] = useState(() => localStorage.getItem('cardroom_name') ?? generateFunName());
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
