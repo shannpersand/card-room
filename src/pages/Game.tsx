@@ -634,7 +634,7 @@ export function Game() {
     if (!turningPlayer) return null;
     const label = turningPlayer.id === myPlayerId ? 'Your turn' : `${turningPlayer.name}'s turn`;
     return (
-      <div className={`text-xs font-semibold px-3 py-1 rounded-full ${isMyTurn ? 'bg-emerald-500 text-white' : 'bg-white/10 text-white/60'}`}>
+      <div className={`text-xs font-semibold px-3 py-1 rounded-full ${isMyTurn ? 'bg-app-primaryLight text-white' : 'bg-white/10 text-white/60'}`}>
         {label}
       </div>
     );
@@ -649,7 +649,7 @@ export function Game() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-emerald-950 safe-top safe-bottom">
+    <div className="min-h-screen flex flex-col bg-app-bg safe-top safe-bottom">
 
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-black/20 border-b border-white/10">
@@ -674,7 +674,7 @@ export function Game() {
           )}
         </div>
         <div className="text-right">
-          <span className="text-emerald-400 font-semibold text-sm">{room?.game_name}</span>
+          <span className="text-app-label font-semibold text-sm">{room?.game_name}</span>
           <div className="text-white/40 text-xs">{room?.deck.length ?? 0} cards left</div>
         </div>
       </div>
@@ -723,7 +723,7 @@ export function Game() {
 
       {/* Blackjack: round results, once everyone is standing/busted */}
       {allBlackjackDone && dealer && (
-        <div className="mx-4 mt-3 bg-amber-900/30 border border-amber-700/40 rounded-xl px-4 py-3">
+        <div className="mx-4 mt-3 bg-amber-900/30 border border-amber-700/40 rounded px-4 py-3">
           <p className="text-amber-300 text-xs font-bold uppercase tracking-wide mb-2">Round Results</p>
           <div className="flex flex-col gap-1">
             {orderedPlayers.slice(1).map(p => {
@@ -731,7 +731,7 @@ export function Game() {
               const dealerValue = blackjackValue(dealer.hand);
               const outcome = blackjackOutcome(value, dealerValue);
               const label = outcome === 'win' ? 'Win' : outcome === 'lose' ? (value > 21 ? 'Bust' : 'Lose') : 'Push';
-              const color = outcome === 'win' ? 'text-emerald-400' : outcome === 'lose' ? 'text-red-400' : 'text-white/60';
+              const color = outcome === 'win' ? 'text-app-label' : outcome === 'lose' ? 'text-red-400' : 'text-white/60';
               return (
                 <div key={p.id} className="flex justify-between text-sm">
                   <span className="text-white/80">{p.name} ({value})</span>
@@ -748,7 +748,7 @@ export function Game() {
             <button
               onClick={playAgain}
               disabled={playingAgain}
-              className="w-full mt-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-amber-950 font-bold py-2 rounded-xl text-sm transition-colors"
+              className="w-full mt-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-amber-950 font-bold py-2 rounded text-sm transition-colors"
             >
               {playingAgain ? 'Dealing…' : 'Play Again'}
             </button>
@@ -758,17 +758,17 @@ export function Game() {
 
       {/* Golf: round results, once the final round wraps back to whoever knocked */}
       {game?.isGolfLike && golfRevealed && (
-        <div className="mx-4 mt-3 bg-amber-900/30 border border-amber-700/40 rounded-xl px-4 py-3">
+        <div className="mx-4 mt-3 bg-amber-900/30 border border-amber-700/40 rounded px-4 py-3">
           <p className="text-amber-300 text-xs font-bold uppercase tracking-wide mb-2">Round Results</p>
           <div className="flex flex-col gap-1">
             {[...orderedPlayers]
               .sort((a, b) => golfScore(a.hand) - golfScore(b.hand))
               .map((p, i) => (
                 <div key={p.id} className="flex justify-between text-sm">
-                  <span className={i === 0 ? 'text-emerald-400 font-semibold' : 'text-white/80'}>
+                  <span className={i === 0 ? 'text-app-label font-semibold' : 'text-white/80'}>
                     {p.name}{p.id === room?.golf_knocked_by ? ' (knocked)' : ''}
                   </span>
-                  <span className={i === 0 ? 'text-emerald-400 font-semibold' : 'text-white/60'}>
+                  <span className={i === 0 ? 'text-app-label font-semibold' : 'text-white/60'}>
                     {golfScore(p.hand)}
                   </span>
                 </div>
@@ -778,7 +778,7 @@ export function Game() {
             <button
               onClick={playAgain}
               disabled={playingAgain}
-              className="w-full mt-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-amber-950 font-bold py-2 rounded-xl text-sm transition-colors"
+              className="w-full mt-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-amber-950 font-bold py-2 rounded text-sm transition-colors"
             >
               {playingAgain ? 'Dealing…' : 'Play Again'}
             </button>
@@ -788,7 +788,7 @@ export function Game() {
 
       {/* Blackjack: action history */}
       {game?.showBlackjackControls && (room?.action_log?.length ?? 0) > 0 && (
-        <div className="mx-4 mt-3 bg-black/20 border border-white/10 rounded-xl px-3 py-2 max-h-28 overflow-y-auto">
+        <div className="mx-4 mt-3 bg-black/20 border border-white/10 rounded px-3 py-2 max-h-28 overflow-y-auto">
           <p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-1">Action History</p>
           <div className="flex flex-col gap-0.5">
             {room!.action_log.map((entry, i) => (
@@ -798,18 +798,21 @@ export function Game() {
         </div>
       )}
 
+      {/* Board: opponents sidebar, table/hand/actions centered, on desktop; stacked on mobile */}
+      <div className="flex-1 flex flex-col sm:flex-row sm:items-stretch sm:gap-6 sm:px-6 sm:py-6 sm:overflow-hidden">
+
       {/* Other players */}
-      <div className="px-4 pt-4 pb-2">
-        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
+      <div className="px-4 pt-4 pb-2 sm:w-[220px] sm:shrink-0 sm:px-0 sm:pt-0 sm:pb-0 sm:overflow-y-auto">
+        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1 sm:flex-col sm:overflow-visible sm:pb-0">
           {otherPlayers.map(player => {
             const isTurn = room?.current_turn === player.id;
             return (
               <div key={player.id}
-                className={`shrink-0 bg-white/5 border rounded-xl px-3 py-2 min-w-24
-                  ${isTurn ? 'border-emerald-500/60 bg-emerald-900/30' : 'border-white/10'}`}
+                className={`shrink-0 bg-white/5 border rounded px-3 py-2 min-w-24 sm:min-w-0 sm:w-full
+                  ${isTurn ? 'border-app-primaryLighter/60 bg-app-panel/30' : 'border-white/10'}`}
               >
                 <div className="flex items-center gap-1 mb-2">
-                  {isTurn && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                  {isTurn && <span className="w-2 h-2 rounded-full bg-app-primaryLighter animate-pulse" />}
                   <span className="text-white text-xs font-semibold truncate max-w-20">{player.name}</span>
                   {player.id === dealer?.id && <span className="text-amber-400 text-xs">★</span>}
                 </div>
@@ -849,13 +852,16 @@ export function Game() {
         </div>
       </div>
 
+      {/* Center column: table, hand, and actions */}
+      <div className="flex-1 flex flex-col sm:items-center sm:justify-center sm:gap-4 sm:max-w-2xl sm:mx-auto sm:w-full sm:min-h-0">
+
       {/* Table area */}
-      <div className="flex-1 px-4 py-2">
+      <div className="flex-1 px-4 py-2 sm:flex-none sm:px-0 sm:py-0 sm:w-full">
         {/* Community / table cards */}
         {(room?.community_cards.length ?? 0) > 0 && (
-          <div className="mb-3">
+          <div className="mb-3 sm:text-center">
             <p className="text-white/40 text-xs mb-2">Table</p>
-            <div className="flex gap-2 overflow-x-auto no-scrollbar">
+            <div className="flex gap-2 overflow-x-auto no-scrollbar sm:justify-center">
               {room!.community_cards.map((card, i) => (
                 <PlayingCard key={card.id + i} card={card} size="md" backColor={room?.back_color} />
               ))}
@@ -864,7 +870,7 @@ export function Game() {
         )}
 
         {/* Deck + Discard piles */}
-        <div className="flex gap-4 items-center">
+        <div className="flex gap-4 items-center sm:justify-center">
           {/* Draw pile */}
           <button
             onClick={
@@ -896,7 +902,7 @@ export function Game() {
                 <PlayingCard card={topDiscard} size="md" backColor={room?.back_color} />
               </div>
             ) : (
-              <div className="w-28 aspect-[177.84/249.84] rounded-lg border-2 border-dashed border-white/20 flex items-center justify-center">
+              <div className="w-28 aspect-[177.84/249.84] rounded border-2 border-dashed border-white/20 flex items-center justify-center">
                 <span className="text-white/20 text-sm">Empty</span>
               </div>
             )}
@@ -909,14 +915,14 @@ export function Game() {
 
       {/* Error message */}
       {actionError && (
-        <div className="px-4 pb-1">
-          <p className="text-red-400 text-xs bg-red-900/30 border border-red-700/30 rounded-lg px-3 py-1.5">{actionError}</p>
+        <div className="px-4 pb-1 sm:px-0 sm:w-full">
+          <p className="text-red-400 text-xs bg-red-900/30 border border-red-700/30 rounded px-3 py-1.5">{actionError}</p>
         </div>
       )}
 
       {/* Your hand */}
-      <div className="border-t border-white/10 bg-black/20 px-4 pt-3 pb-2">
-        <div className="flex items-center justify-between mb-2">
+      <div className="border-t border-white/10 bg-black/20 px-4 pt-3 pb-2 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0 sm:w-full">
+        <div className="flex items-center justify-between mb-2 sm:justify-center sm:gap-3">
           <p className="text-white/60 text-xs font-medium">Your hand · {myPlayer?.name}</p>
           {myPlayer?.is_standing && game?.showBlackjackControls && (
             <span className={`text-xs font-semibold ${blackjackValue(myPlayer.hand) > 21 ? 'text-red-400' : 'text-amber-400'}`}>
@@ -952,7 +958,7 @@ export function Game() {
               ))}
             </div>
           ) : (
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-1">
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-1 sm:flex-wrap sm:justify-center sm:overflow-visible">
               {myPlayer!.hand.map(card => (
                 <PlayingCard
                   key={card.id}
@@ -974,7 +980,7 @@ export function Game() {
       </div>
 
       {/* Action bar */}
-      <div className="px-4 py-3 bg-black/30 border-t border-white/10 safe-bottom">
+      <div className="px-4 py-3 bg-black/30 border-t border-white/10 safe-bottom sm:bg-transparent sm:border-t-0 sm:px-0 sm:py-0 sm:w-full sm:max-w-sm sm:mx-auto">
         {game?.showBlackjackControls ? (
           !myPlayer?.is_standing ? (
             // Blackjack controls
@@ -982,14 +988,14 @@ export function Game() {
               <button
                 onClick={canAct ? drawFromDeck : undefined}
                 disabled={!canAct}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold py-3 rounded-xl transition-colors"
+                className="flex-1 bg-app-primary hover:bg-app-primaryLight disabled:opacity-40 text-white font-bold py-3 rounded transition-colors"
               >
                 Hit
               </button>
               <button
                 onClick={canAct ? stand : undefined}
                 disabled={!canAct}
-                className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold py-3 rounded-xl transition-colors"
+                className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold py-3 rounded transition-colors"
               >
                 Stand
               </button>
@@ -1007,7 +1013,7 @@ export function Game() {
             <button
               onClick={canAct ? drawFromDeck : undefined}
               disabled={!canAct}
-              className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+              className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold py-3 rounded transition-colors text-sm"
             >
               Go Fish (Draw)
             </button>
@@ -1018,7 +1024,7 @@ export function Game() {
                 setShowAskDialog(true);
               }}
               disabled={!canAct || otherPlayers.length === 0}
-              className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+              className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-semibold py-3 rounded transition-colors text-sm"
             >
               Ask for Rank
             </button>
@@ -1038,7 +1044,7 @@ export function Game() {
                 <p className="text-white/60 text-sm text-center font-medium">Tap one of your cards to replace it</p>
                 <button
                   onClick={golfDiscardDrawn}
-                  className="w-full bg-white/10 hover:bg-white/20 text-white font-semibold py-2 rounded-xl text-sm transition-colors"
+                  className="w-full bg-white/10 hover:bg-white/20 text-white font-semibold py-2 rounded text-sm transition-colors"
                 >
                   Discard drawn card instead
                 </button>
@@ -1049,7 +1055,7 @@ export function Game() {
                 {!room?.golf_knocked_by && (
                   <button
                     onClick={golfKnock}
-                    className="shrink-0 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold px-4 py-2 rounded-xl text-sm transition-colors"
+                    className="shrink-0 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold px-4 py-2 rounded text-sm transition-colors"
                   >
                     Knock
                   </button>
@@ -1063,14 +1069,14 @@ export function Game() {
             <button
               onClick={selectedCard && canAct ? playToTable : undefined}
               disabled={!selectedCard || !canAct}
-              className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+              className="flex-1 bg-app-primary hover:bg-app-primaryLight disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded transition-colors text-sm"
             >
               Play to Table
             </button>
             <button
               onClick={selectedCard && canAct ? discardSelected : undefined}
               disabled={!selectedCard || !canAct}
-              className="flex-1 bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+              className="flex-1 bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded transition-colors text-sm"
             >
               Discard
             </button>
@@ -1085,16 +1091,19 @@ export function Game() {
         )}
       </div>
 
+      </div>
+      </div>
+
       {/* Go Fish: Ask dialog */}
       {showAskDialog && (
         <div className="fixed inset-0 bg-black/70 flex items-end justify-center z-50" onClick={() => setShowAskDialog(false)}>
-          <div className="bg-emerald-900 border border-emerald-700 rounded-t-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-white font-bold text-lg mb-4">Ask for a card</h3>
+          <div className="bg-app-panel border border-app-primary/40 rounded-t-lg w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="font-display text-app-accent text-2xl mb-4">Ask for a card</h3>
             <div className="mb-4">
               <label className="text-white/60 text-sm mb-1 block">Ask player</label>
               <select value={askTargetId} onChange={e => setAskTargetId(e.target.value)}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none">
-                {otherPlayers.map(p => <option key={p.id} value={p.id} className="bg-emerald-950">{p.name}</option>)}
+                className="w-full bg-white/10 border border-white/20 rounded px-4 py-3 text-white focus:outline-none">
+                {otherPlayers.map(p => <option key={p.id} value={p.id} className="bg-app-bg">{p.name}</option>)}
               </select>
             </div>
             <div className="mb-6">
@@ -1102,16 +1111,16 @@ export function Game() {
               <div className="flex flex-wrap gap-2">
                 {(['A','2','3','4','5','6','7','8','9','10','J','Q','K'] as Rank[]).map(r => (
                   <button key={r} onClick={() => setAskRank(r)}
-                    className={`px-3 py-2 rounded-lg font-bold text-sm transition-colors
-                      ${askRank === r ? 'bg-emerald-500 text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
+                    className={`px-3 py-2 rounded font-bold text-sm transition-colors
+                      ${askRank === r ? 'bg-app-primaryLight text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
                     {r}
                   </button>
                 ))}
               </div>
             </div>
             <div className="flex gap-2">
-              <button onClick={() => setShowAskDialog(false)} className="flex-1 bg-white/10 text-white py-3 rounded-xl font-semibold">Cancel</button>
-              <button onClick={executeGoFishAsk} className="flex-1 bg-emerald-500 text-white py-3 rounded-xl font-bold">Ask!</button>
+              <button onClick={() => setShowAskDialog(false)} className="flex-1 bg-white/10 text-white py-3 rounded font-semibold">Cancel</button>
+              <button onClick={executeGoFishAsk} className="flex-1 bg-app-primaryLight text-white py-3 rounded font-bold">Ask!</button>
             </div>
           </div>
         </div>
@@ -1120,15 +1129,15 @@ export function Game() {
       {/* Dealer: Game Settings panel */}
       {showSettings && pendingConfig && (
         <div className="fixed inset-0 bg-black/70 flex items-end justify-center z-50" onClick={() => setShowSettings(false)}>
-          <div className="bg-emerald-900 border border-emerald-700 rounded-t-2xl w-full max-w-md p-6 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <h3 className="text-white font-bold text-lg mb-4">Game Settings</h3>
+          <div className="bg-app-panel border border-app-primary/40 rounded-t-lg w-full max-w-md p-6 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="font-display text-app-accent text-2xl mb-4">Game Settings</h3>
 
             <div className="mb-4">
               <label className="text-white/60 text-sm mb-1 block">Name</label>
               <input
                 value={pendingConfig.name}
                 onChange={e => updateField('name', e.target.value)}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none"
+                className="w-full bg-white/10 border border-white/20 rounded px-4 py-3 text-white focus:outline-none"
               />
             </div>
 
@@ -1156,11 +1165,11 @@ export function Game() {
               <select
                 value={pendingMode}
                 onChange={e => applyModeChange(e.target.value as PendingMode)}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none appearance-none"
+                className="w-full bg-white/10 border border-white/20 rounded px-4 py-3 text-white focus:outline-none appearance-none"
               >
-                <option value="freeplay" className="bg-emerald-950">Free play (play/discard)</option>
-                <option value="blackjack" className="bg-emerald-950">Blackjack (hit/stand)</option>
-                <option value="golf" className="bg-emerald-950">Golf (4-card grid)</option>
+                <option value="freeplay" className="bg-app-bg">Free play (play/discard)</option>
+                <option value="blackjack" className="bg-app-bg">Blackjack (hit/stand)</option>
+                <option value="golf" className="bg-app-bg">Golf (4-card grid)</option>
               </select>
             </div>
 
@@ -1175,8 +1184,8 @@ export function Game() {
                       <button
                         key={rank}
                         onClick={() => updateField('golfZeroRank', rank)}
-                        className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors
-                          ${pendingConfig.golfZeroRank === rank ? 'bg-emerald-600 text-white' : 'bg-white/10 text-white/60 hover:text-white'}`}
+                        className={`flex-1 py-2 rounded text-sm font-semibold transition-colors
+                          ${pendingConfig.golfZeroRank === rank ? 'bg-app-primary text-white' : 'bg-white/10 text-white/60 hover:text-white'}`}
                       >
                         {rank === 'Q' ? 'Queens' : 'Kings'}
                       </button>
@@ -1215,7 +1224,7 @@ export function Game() {
                     type="number" min={1} max={13}
                     value={pendingConfig.dealPlan.cardsPerPlayer}
                     onChange={e => updateDealPlan('cardsPerPlayer', Math.max(1, Math.min(13, Number(e.target.value) || 1)))}
-                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none"
+                    className="w-full bg-white/10 border border-white/20 rounded px-4 py-3 text-white focus:outline-none"
                   />
                 </div>
                 {pendingMode === 'freeplay' && (
@@ -1247,7 +1256,7 @@ export function Game() {
                   type="number" min={1}
                   value={pendingConfig.minPlayers}
                   onChange={e => updateField('minPlayers', Math.max(1, Number(e.target.value) || 1))}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none"
+                  className="w-full bg-white/10 border border-white/20 rounded px-4 py-3 text-white focus:outline-none"
                 />
               </div>
               <div className="flex-1">
@@ -1256,7 +1265,7 @@ export function Game() {
                   type="number" min={1}
                   value={pendingConfig.maxPlayers}
                   onChange={e => updateField('maxPlayers', Math.max(1, Number(e.target.value) || 1))}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none"
+                  className="w-full bg-white/10 border border-white/20 rounded px-4 py-3 text-white focus:outline-none"
                 />
               </div>
             </div>
@@ -1267,7 +1276,7 @@ export function Game() {
                 value={pendingConfig.instructions}
                 onChange={e => updateField('instructions', e.target.value)}
                 rows={3}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none text-sm"
+                className="w-full bg-white/10 border border-white/20 rounded px-4 py-3 text-white focus:outline-none text-sm"
               />
             </div>
 
@@ -1278,12 +1287,12 @@ export function Game() {
                 onChange={e => setFeaturePrompt(e.target.value)}
                 placeholder="e.g. add jokers as wild cards"
                 maxLength={200}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-white/40 focus:outline-none"
+                className="w-full bg-white/10 border border-white/20 rounded px-4 py-3 text-white placeholder-white/40 focus:outline-none"
               />
               <button
                 onClick={amendWithAI}
                 disabled={amending || !featurePrompt.trim()}
-                className="w-full mt-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+                className="w-full mt-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded transition-colors text-sm"
               >
                 {amending ? 'Asking AI…' : 'Ask AI'}
               </button>
@@ -1296,29 +1305,29 @@ export function Game() {
                 onChange={e => setSaveName(e.target.value)}
                 placeholder="e.g. Friday Night Rummy"
                 maxLength={60}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-white/40 focus:outline-none"
+                className="w-full bg-white/10 border border-white/20 rounded px-4 py-3 text-white placeholder-white/40 focus:outline-none"
               />
               <button
                 onClick={saveToLibrary}
                 disabled={saving || !saveName.trim()}
-                className="w-full mt-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+                className="w-full mt-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded transition-colors text-sm"
               >
                 {saving ? 'Saving…' : 'Save to Library'}
               </button>
             </div>
 
             {settingsError && (
-              <p className="text-red-400 text-sm bg-red-900/30 border border-red-700/50 rounded-lg px-4 py-2 mb-4">{settingsError}</p>
+              <p className="text-red-400 text-sm bg-red-900/30 border border-red-700/50 rounded px-4 py-2 mb-4">{settingsError}</p>
             )}
 
             <div className="flex gap-2">
-              <button onClick={() => setShowSettings(false)} className="flex-1 bg-white/10 text-white py-3 rounded-xl font-semibold">
+              <button onClick={() => setShowSettings(false)} className="flex-1 bg-white/10 text-white py-3 rounded font-semibold">
                 Cancel
               </button>
               <button
                 onClick={dealAgain}
                 disabled={redealing}
-                className="flex-1 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-amber-950 py-3 rounded-xl font-bold"
+                className="flex-1 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-amber-950 py-3 rounded font-bold"
               >
                 {redealing ? 'Dealing…' : 'Deal Again'}
               </button>
