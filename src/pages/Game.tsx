@@ -9,6 +9,14 @@ import type { Room, Player, Card, HoldemStage, Rank, GeneratedGameConfig, DealPl
 
 type PendingMode = 'freeplay' | 'blackjack' | 'holdem' | 'gofish' | 'golf';
 
+const RANK_NAMES: Partial<Record<Rank, string>> = { A: 'Ace', K: 'King', Q: 'Queen', J: 'Jack' };
+const SUIT_NAMES: Record<Card['suit'], string> = { spades: 'Spades', hearts: 'Hearts', diamonds: 'Diamonds', clubs: 'Clubs' };
+/** "King of Hearts" / "7 of Diamonds" — the name label shown under a hovered/selected card. */
+function cardFullName(card: Card): string {
+  if (card.rank === 'Joker') return 'Joker';
+  return `${RANK_NAMES[card.rank] ?? card.rank} of ${SUIT_NAMES[card.suit]}`;
+}
+
 export function Game() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
@@ -16,6 +24,8 @@ export function Game() {
   const [room, setRoom] = useState<Room | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  // Desktop-only hover preview for the default hand (mouse-driven; irrelevant on touch).
+  const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showInstructions, setShowInstructions] = useState(false);
   const [showAskDialog, setShowAskDialog] = useState(false);
@@ -39,6 +49,8 @@ export function Game() {
   const [golfPeekedNow, setGolfPeekedNow] = useState<Set<string>>(new Set());
   const [golfPeekUsed, setGolfPeekUsed] = useState<Set<string>>(new Set());
   const [golfPendingDraw, setGolfPendingDraw] = useState<{ card: Card; source: 'deck' | 'discard' } | null>(null);
+  // Desktop-only hover ring on a grid slot (peek target or swap target) — no touch equivalent.
+  const [hoveredGolfIdx, setHoveredGolfIdx] = useState<number | null>(null);
   const prevDeckLenRef = useRef<number | null>(null);
 
   const myPlayerId = localStorage.getItem('cardroom_player_id');
@@ -54,6 +66,9 @@ export function Game() {
   const canAct = !game?.turnBased || isMyTurn;
   const selectedCard = myPlayer?.hand.find(c => c.id === selectedCardId) ?? null;
   const topDiscard = room?.discard_pile.at(-1) ?? null;
+  // Blackjack, Hold'em, and Go Fish never touch room.discard_pile at all — showing an
+  // always-empty "Discard" placeholder for them is dead UI, not just an empty state.
+  const usesDiscardPile = !game?.showBlackjackControls && !game?.showHoldemControls && !game?.isGoFishLike;
   const allBlackjackDone = !!game?.showBlackjackControls
     && orderedPlayers.length > 0
     && orderedPlayers.every(p => p.is_standing);
@@ -62,6 +77,15 @@ export function Game() {
     && orderedPlayers.every(p => p.hand.every(c => c.faceUp));
   const golfScore = (hand: Card[]) =>
     golfHandValue(hand, { zeroRank: game?.golfZeroRank, pairsCancel: game?.golfPairsCancel });
+  const golfPeeksLeft = Math.max(0, 2 - golfPeekUsed.size - golfPeekedNow.size);
+  // Desktop status headline, matching the Figma "Game desktop Golf" frames' amber caption.
+  const golfStatusText = golfRevealed
+    ? 'Round over'
+    : golfPendingDraw
+    ? 'Swap or discard'
+    : isMyTurn
+    ? 'It’s your turn'
+    : `${orderedPlayers.find(p => p.id === room?.current_turn)?.name ?? 'A player'}’s turn`;
 
   function appendLog(current: string[] | null | undefined, entry: string): string[] {
     return [...(current ?? []), entry].slice(-30);
@@ -429,6 +453,7 @@ export function Game() {
       supabase.from('rooms').update({ deck: remainingDeck }).eq('id', room.id),
       supabase.from('players').update({ hand: newHand }).eq('id', myPlayer.id),
     ]);
+    await logAction(`${myPlayer.name} drew from the deck`);
   }
 
   async function drawFromDiscard() {
@@ -441,6 +466,7 @@ export function Game() {
       supabase.from('rooms').update({ discard_pile: newDiscard }).eq('id', room.id),
       supabase.from('players').update({ hand: newHand }).eq('id', myPlayer.id),
     ]);
+    await logAction(`${myPlayer.name} drew ${drawn.rank}${SUIT_SYMBOLS[drawn.suit]} from the discard pile`);
   }
 
   async function playToTable() {
@@ -455,6 +481,7 @@ export function Game() {
       supabase.from('rooms').update({ community_cards: newCommunity, current_turn: nextTurn }).eq('id', room.id),
       supabase.from('players').update({ hand: newHand }).eq('id', myPlayer.id),
     ]);
+    await logAction(`${myPlayer.name} played ${selectedCard.rank}${SUIT_SYMBOLS[selectedCard.suit]} to the table`);
   }
 
   async function discardSelected() {
@@ -469,6 +496,7 @@ export function Game() {
       supabase.from('rooms').update({ discard_pile: newDiscard, current_turn: nextTurn }).eq('id', room.id),
       supabase.from('players').update({ hand: newHand }).eq('id', myPlayer.id),
     ]);
+    await logAction(`${myPlayer.name} discarded ${selectedCard.rank}${SUIT_SYMBOLS[selectedCard.suit]}`);
   }
 
   // --- Golf ---
@@ -524,6 +552,7 @@ export function Game() {
       }).eq('id', myPlayer.id),
       ...(revealing ? [revealAllGolfHands(myPlayer.id)] : []),
     ]);
+    await logAction(`${myPlayer.name} swapped in a card, discarding ${oldCard.rank}${SUIT_SYMBOLS[oldCard.suit]}`);
   }
 
   /** Declines the swap — the drawn card goes straight to discard and your hand stays as-is. */
@@ -538,6 +567,7 @@ export function Game() {
       supabase.from('rooms').update({ discard_pile: newDiscard, current_turn: revealing ? null : nextTurn }).eq('id', room.id),
       ...(revealing ? [revealAllGolfHands()] : []),
     ]);
+    await logAction(`${myPlayer.name} discarded ${discarded.rank}${SUIT_SYMBOLS[discarded.suit]} without swapping`);
   }
 
   /** Ends your turn without drawing — everyone else gets exactly one more turn, then all hands reveal. */
@@ -546,6 +576,7 @@ export function Game() {
     setActionError('');
     const nextTurn = nextPlayerInOrder(orderedPlayers, myPlayerId ?? null);
     await supabase.from('rooms').update({ golf_knocked_by: myPlayer.id, current_turn: nextTurn }).eq('id', room.id);
+    await logAction(`${myPlayer.name} knocked`);
   }
 
   function handleGolfCardClick(card: Card, idx: number) {
@@ -628,14 +659,24 @@ export function Game() {
 
   // --- Render helpers ---
 
-  function TurnBadge() {
-    if (!game?.turnBased) return null;
-    const turningPlayer = orderedPlayers.find(p => p.id === room?.current_turn);
-    if (!turningPlayer) return null;
-    const label = turningPlayer.id === myPlayerId ? 'Your turn' : `${turningPlayer.name}'s turn`;
+  /** Full-width player roster / turn indicator — the current turn-holder is called out
+      in amber with an underline, matching the Figma "Game Desktop" TURN bar. */
+  function TurnTabs() {
+    if (orderedPlayers.length === 0) return null;
     return (
-      <div className={`text-xs font-semibold px-3 py-1 rounded-full ${isMyTurn ? 'bg-app-primaryLight text-white' : 'bg-white/10 text-white/60'}`}>
-        {label}
+      <div className="flex items-center gap-5 sm:gap-8 px-4 sm:px-8 py-2.5 bg-black/10 border-b border-white/10 overflow-x-auto no-scrollbar">
+        <span className="text-[10px] font-bold tracking-widest text-white/30 shrink-0">TURN</span>
+        {orderedPlayers.map(p => {
+          const isTurn = !!game?.turnBased && room?.current_turn === p.id;
+          return (
+            <div key={p.id} className="relative shrink-0 pb-2 -mb-2">
+              <span className={`font-display text-base sm:text-lg tracking-wide whitespace-nowrap ${isTurn ? 'text-amber-400' : 'text-app-label'}`}>
+                {p.name}{p.id === myPlayerId && ' (you)'}
+              </span>
+              {isTurn && <span className="absolute left-0 right-0 bottom-0 h-[3px] bg-amber-400 rounded-full" />}
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -651,14 +692,18 @@ export function Game() {
   return (
     <div className="min-h-screen flex flex-col bg-app-bg safe-top safe-bottom">
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-black/20 border-b border-white/10">
-        <div>
-          <span className="text-white/50 text-xs">Room </span>
-          <span className="text-white font-bold tracking-widest">{code}</span>
+      {/* Header — big game name (matches the Figma "Game Desktop" header) with room info
+          beside it; nav links float right on desktop, drop to their own row on mobile. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6 px-4 py-3 sm:px-8 bg-black/20 border-b border-white/10">
+        <div className="flex items-center justify-between sm:contents">
+          <h1 className="font-display text-2xl sm:text-3xl md:text-4xl text-white tracking-wide">{room?.game_name}</h1>
+          <div className="text-right sm:text-left">
+            <div className="text-app-label text-xs font-semibold">Room {code}</div>
+            <div className="text-white/40 text-xs">{orderedPlayers.length} players · {room?.deck.length ?? 0} cards left</div>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <TurnBadge />
+        <div className="sm:flex-1" />
+        <div className="flex items-center justify-center flex-wrap gap-4">
           <button onClick={() => setShowInstructions(v => !v)} className="text-white/40 hover:text-white text-xs">
             Rules
           </button>
@@ -673,11 +718,9 @@ export function Game() {
             </>
           )}
         </div>
-        <div className="text-right">
-          <span className="text-app-label font-semibold text-sm">{room?.game_name}</span>
-          <div className="text-white/40 text-xs">{room?.deck.length ?? 0} cards left</div>
-        </div>
       </div>
+
+      <TurnTabs />
 
       {/* Instructions panel */}
       {showInstructions && game && (
@@ -786,9 +829,10 @@ export function Game() {
         </div>
       )}
 
-      {/* Blackjack: action history */}
-      {game?.showBlackjackControls && (room?.action_log?.length ?? 0) > 0 && (
-        <div className="mx-4 mt-3 bg-black/20 border border-white/10 rounded px-3 py-2 max-h-28 overflow-y-auto">
+      {/* Action History — full-width banner on mobile, right sidebar on desktop (see below).
+          Now populated for any game mode, not just Blackjack. */}
+      {(room?.action_log?.length ?? 0) > 0 && (
+        <div className="mx-4 mt-3 bg-black/20 border border-white/10 rounded px-3 py-2 max-h-28 overflow-y-auto sm:hidden">
           <p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-1">Action History</p>
           <div className="flex flex-col gap-0.5">
             {room!.action_log.map((entry, i) => (
@@ -798,8 +842,10 @@ export function Game() {
         </div>
       )}
 
-      {/* Board: opponents sidebar, table/hand/actions centered, on desktop; stacked on mobile */}
-      <div className="flex-1 flex flex-col sm:flex-row sm:items-stretch sm:gap-6 sm:px-6 sm:py-6 sm:overflow-hidden">
+      {/* Board: opponents sidebar, table/hand/actions centered, action history, on desktop;
+          stacked on mobile. pb-28 on mobile reserves room at the bottom so the now-`fixed`
+          hand/action-bar (see below) never overlaps the tail of the grid/opponents. */}
+      <div className="flex-1 flex flex-col pb-28 sm:pb-0 sm:flex-row sm:items-stretch sm:gap-6 sm:px-6 sm:py-6 sm:overflow-hidden">
 
       {/* Other players */}
       <div className="px-4 pt-4 pb-2 sm:w-[220px] sm:shrink-0 sm:px-0 sm:pt-0 sm:pb-0 sm:overflow-y-auto">
@@ -852,15 +898,69 @@ export function Game() {
         </div>
       </div>
 
-      {/* Center column: table, hand, and actions */}
-      <div className="flex-1 flex flex-col sm:items-center sm:justify-center sm:gap-4 sm:max-w-2xl sm:mx-auto sm:w-full sm:min-h-0">
+      {/* Center column: table, hand, and actions. Golf gets its own desktop arrangement —
+          Deck beside the 2x2 grid rather than above it, matching the Figma "Game desktop
+          Golf" frames — via flex-wrap + order rather than restructuring the DOM, so mobile
+          (which stays stacked, unchanged) shares the exact same markup. */}
+      <div className={`flex-1 flex flex-col sm:items-center sm:justify-center sm:gap-4 sm:max-w-2xl sm:mx-auto sm:w-full sm:min-h-0
+        ${game?.isGolfLike ? 'sm:flex-row sm:flex-wrap sm:items-start sm:max-w-4xl' : ''}`}>
 
-      {/* Table area */}
-      <div className="flex-1 px-4 py-2 sm:flex-none sm:px-0 sm:py-0 sm:w-full">
-        {/* Community / table cards */}
+      {/* Deck + Table, side by side on desktop (matches the Figma "Game Desktop" body),
+          stacked on mobile */}
+      <div className={`flex-1 px-4 py-2 sm:flex-none sm:px-0 sm:py-0 sm:w-full sm:flex sm:gap-16 sm:justify-center sm:items-start
+        ${game?.isGolfLike ? 'sm:order-1 sm:w-auto' : ''}`}>
+        {/* Deck group: draw + discard piles */}
+        <div className="mb-4 sm:mb-0">
+          <p className="font-display text-app-label text-sm tracking-wide mb-2 sm:text-center">Deck</p>
+          <div className="flex gap-4 items-center sm:justify-center">
+            {/* Draw pile */}
+            <button
+              onClick={
+                !canAct ? undefined
+                : game?.isGolfLike ? (golfPendingDraw ? undefined : golfDrawFromDeck)
+                : drawFromDeck
+              }
+              disabled={!canAct || (room?.deck.length ?? 0) === 0 || (game?.isGolfLike && !!golfPendingDraw)}
+              className="flex flex-col items-center gap-1"
+            >
+              <PlayingCard
+                card={{ id: 'draw-pile', rank: 'A', suit: 'spades', faceUp: false }}
+                size="md"
+                backColor={room?.back_color}
+              />
+              <span className="text-white/40 text-xs">Draw · {room?.deck.length ?? 0}</span>
+            </button>
+
+            {/* Discard pile / draw from discard — hidden for games that never use it */}
+            {usesDiscardPile && (
+              <div className="flex flex-col items-center gap-1">
+                {topDiscard ? (
+                  <div
+                    onClick={
+                      !(game?.canDrawFromDiscard && canAct) ? undefined
+                      : game?.isGolfLike ? (golfPendingDraw ? undefined : golfDrawFromDiscard)
+                      : drawFromDiscard
+                    }
+                    className={game?.canDrawFromDiscard && canAct && !(game?.isGolfLike && golfPendingDraw) ? 'cursor-pointer' : 'cursor-default'}>
+                    <PlayingCard card={topDiscard} size="md" backColor={room?.back_color} />
+                  </div>
+                ) : (
+                  <div className="w-28 aspect-[177.84/249.84] rounded border-2 border-dashed border-white/20 flex items-center justify-center">
+                    <span className="text-white/20 text-sm">Empty</span>
+                  </div>
+                )}
+                <span className="text-white/40 text-xs">
+                  {game?.canDrawFromDiscard && canAct ? 'Tap to draw' : 'Discard'}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Table group: community / played cards */}
         {(room?.community_cards.length ?? 0) > 0 && (
-          <div className="mb-3 sm:text-center">
-            <p className="text-white/40 text-xs mb-2">Table</p>
+          <div>
+            <p className="font-display text-app-label text-sm tracking-wide mb-2 sm:text-center">Table</p>
             <div className="flex gap-2 overflow-x-auto no-scrollbar sm:justify-center">
               {room!.community_cards.map((card, i) => (
                 <PlayingCard key={card.id + i} card={card} size="md" backColor={room?.back_color} />
@@ -868,49 +968,6 @@ export function Game() {
             </div>
           </div>
         )}
-
-        {/* Deck + Discard piles */}
-        <div className="flex gap-4 items-center sm:justify-center">
-          {/* Draw pile */}
-          <button
-            onClick={
-              !canAct ? undefined
-              : game?.isGolfLike ? (golfPendingDraw ? undefined : golfDrawFromDeck)
-              : drawFromDeck
-            }
-            disabled={!canAct || (room?.deck.length ?? 0) === 0 || (game?.isGolfLike && !!golfPendingDraw)}
-            className="flex flex-col items-center gap-1"
-          >
-            <PlayingCard
-              card={{ id: 'draw-pile', rank: 'A', suit: 'spades', faceUp: false }}
-              size="md"
-              backColor={room?.back_color}
-            />
-            <span className="text-white/40 text-xs">Draw · {room?.deck.length ?? 0}</span>
-          </button>
-
-          {/* Discard pile / draw from discard */}
-          <div className="flex flex-col items-center gap-1">
-            {topDiscard ? (
-              <div
-                onClick={
-                  !(game?.canDrawFromDiscard && canAct) ? undefined
-                  : game?.isGolfLike ? (golfPendingDraw ? undefined : golfDrawFromDiscard)
-                  : drawFromDiscard
-                }
-                className={game?.canDrawFromDiscard && canAct && !(game?.isGolfLike && golfPendingDraw) ? 'cursor-pointer' : 'cursor-default'}>
-                <PlayingCard card={topDiscard} size="md" backColor={room?.back_color} />
-              </div>
-            ) : (
-              <div className="w-28 aspect-[177.84/249.84] rounded border-2 border-dashed border-white/20 flex items-center justify-center">
-                <span className="text-white/20 text-sm">Empty</span>
-              </div>
-            )}
-            <span className="text-white/40 text-xs">
-              {game?.canDrawFromDiscard && canAct ? 'Tap to draw' : 'Discard'}
-            </span>
-          </div>
-        </div>
       </div>
 
       {/* Error message */}
@@ -920,67 +977,164 @@ export function Game() {
         </div>
       )}
 
+      {/* Your hand + action bar are pinned to the bottom of the viewport on mobile via
+          `fixed`, not `sticky` — sticky only holds an element in place once scrolling
+          would carry it past the threshold, it doesn't pull an element up from beyond
+          the fold when the page hasn't been scrolled yet, which is exactly Golf's case
+          (opponent grids alone can exceed one screen). `fixed` always renders at the
+          true viewport bottom regardless of scroll position or content height above it.
+          sm:contents removes this wrapper from desktop layout entirely, so the two
+          children go back to being normal flex items in the centered column. */}
+      <div className="fixed inset-x-0 bottom-0 z-10 bg-app-bg safe-bottom sm:static sm:contents">
       {/* Your hand */}
-      <div className="border-t border-white/10 bg-black/20 px-4 pt-3 pb-2 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0 sm:w-full">
+      <div className={`border-t border-white/10 bg-black/20 px-4 pt-3 pb-2 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0 sm:w-full
+        ${game?.isGolfLike ? 'sm:order-2 sm:w-auto sm:flex sm:flex-col sm:items-center' : ''}`}>
+        {/* Desktop status headline for Golf, matching the amber Ohno Blazeface caption in
+            the Figma "Game desktop Golf" frames. Mobile keeps the small muted header. */}
+        {game?.isGolfLike && (
+          <p className="hidden sm:block font-display text-amber-400 text-2xl tracking-wide mb-3">{golfStatusText}</p>
+        )}
         <div className="flex items-center justify-between mb-2 sm:justify-center sm:gap-3">
-          <p className="text-white/60 text-xs font-medium">Your hand · {myPlayer?.name}</p>
+          <p className={`text-white/60 text-xs font-medium ${game?.isGolfLike ? 'sm:hidden' : ''}`}>Your hand · {myPlayer?.name}</p>
           {myPlayer?.is_standing && game?.showBlackjackControls && (
             <span className={`text-xs font-semibold ${blackjackValue(myPlayer.hand) > 21 ? 'text-red-400' : 'text-amber-400'}`}>
               {blackjackValue(myPlayer.hand) > 21 ? 'BUSTED' : 'STANDING'}
             </span>
           )}
           {game?.isGolfLike && !golfRevealed && (
-            <span className="text-white/30 text-xs">
-              {golfPendingDraw ? 'Tap a card to replace it' : `Peeks left: ${Math.max(0, 2 - golfPeekUsed.size - golfPeekedNow.size)}`}
+            <span className="text-white/30 text-xs sm:hidden">
+              {golfPendingDraw ? 'Tap a card to replace it' : `Peeks left: ${golfPeeksLeft}`}
             </span>
           )}
         </div>
         {golfPendingDraw && (
-          <div className="flex items-center gap-2 mb-2">
-            <PlayingCard card={{ ...golfPendingDraw.card, faceUp: true }} size="sm" />
-            <span className="text-amber-300 text-xs font-medium">
+          <div className="flex items-center gap-2 mb-2 sm:flex-col sm:mb-4">
+            <div className="sm:ring-2 sm:ring-amber-400 sm:rounded sm:shadow-[0_0_12px_rgba(245,158,11,0.5)]">
+              <PlayingCard card={{ ...golfPendingDraw.card, faceUp: true }} size="sm" />
+            </div>
+            <span className="text-amber-300 text-xs font-medium sm:hidden">
               Drew {golfPendingDraw.card.rank}{SUIT_SYMBOLS[golfPendingDraw.card.suit]} — tap one of your cards below
+            </span>
+            <span className="hidden sm:block font-display text-amber-400 text-sm tracking-wide">
+              {cardFullName(golfPendingDraw.card)}
             </span>
           </div>
         )}
         {(myPlayer?.hand.length ?? 0) > 0 ? (
           game?.isGolfLike ? (
-            <div className="grid grid-cols-2 gap-2 w-fit mx-auto pb-1 pt-1">
-              {myPlayer!.hand.map((card, idx) => (
-                <PlayingCard
-                  key={card.id}
-                  card={{ ...card, faceUp: card.faceUp || golfPeekedNow.has(card.id) }}
-                  isOwner={false}
-                  size="lg"
-                  backColor={room?.back_color}
-                  onClick={() => handleGolfCardClick(card, idx)}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-2 w-fit mx-auto pb-1 pt-1">
+                {myPlayer!.hand.map((card, idx) => (
+                  <div
+                    key={card.id}
+                    onMouseEnter={() => setHoveredGolfIdx(idx)}
+                    onMouseLeave={() => setHoveredGolfIdx(prev => (prev === idx ? null : prev))}
+                    className={`sm:rounded sm:transition-shadow ${hoveredGolfIdx === idx && !golfRevealed
+                      ? 'sm:ring-2 sm:ring-blue-400 sm:shadow-[0_0_12px_rgba(112,156,251,0.6)]' : ''}`}
+                  >
+                    <PlayingCard
+                      card={{ ...card, faceUp: card.faceUp || golfPeekedNow.has(card.id) }}
+                      isOwner={false}
+                      size="lg"
+                      backColor={room?.back_color}
+                      onClick={() => handleGolfCardClick(card, idx)}
+                    />
+                  </div>
+                ))}
+              </div>
+              {!golfRevealed && (
+                <p className="hidden sm:block font-display text-app-label text-sm tracking-wide mt-3">
+                  {golfPendingDraw ? 'Tap a card to replace it' : `Peeks left: ${golfPeeksLeft}`}
+                </p>
+              )}
+            </>
           ) : (
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-1 sm:flex-wrap sm:justify-center sm:overflow-visible">
-              {myPlayer!.hand.map(card => (
-                <PlayingCard
-                  key={card.id}
-                  card={card}
-                  isOwner
-                  selected={selectedCardId === card.id}
-                  size="lg"
-                  onClick={() => {
-                    setSelectedCardId(prev => prev === card.id ? null : card.id);
-                    setActionError('');
-                  }}
-                />
-              ))}
-            </div>
+            <>
+              {/* Fanned hand — on desktop, cards overlap and respond to hover: the hovered/
+                  selected card lifts and pops full-color while its neighbors dim, matching
+                  the Figma "Game Desktop 3/4" hover and selection states. Touch has no
+                  hover, so mobile just keeps the plain tap-to-select row (unchanged). */}
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 pt-1 sm:flex-wrap sm:justify-center sm:overflow-visible sm:gap-0 sm:pt-3">
+                {myPlayer!.hand.map((card, idx) => {
+                  const activeId = selectedCardId ?? hoveredCardId;
+                  const isSelected = selectedCardId === card.id;
+                  const isActive = activeId === card.id;
+                  const isDimmed = !!activeId && !isActive;
+                  return (
+                    <div
+                      key={card.id}
+                      onMouseEnter={() => setHoveredCardId(card.id)}
+                      onMouseLeave={() => setHoveredCardId(prev => (prev === card.id ? null : prev))}
+                      className={`relative transition-all duration-150 ease-out rounded
+                        ${idx > 0 ? 'sm:-ml-10' : ''}
+                        ${isSelected ? 'z-20 -translate-y-3 sm:-translate-y-6 ring-2 ring-blue-400 shadow-[0_0_16px_rgba(112,156,251,0.6)]' : isActive ? 'sm:z-10 sm:-translate-y-3' : 'sm:z-0'}
+                        ${isDimmed ? 'sm:grayscale sm:opacity-60' : ''}`}
+                    >
+                      <PlayingCard
+                        card={card}
+                        isOwner
+                        size="lg"
+                        onClick={() => {
+                          setSelectedCardId(prev => (prev === card.id ? null : card.id));
+                          setActionError('');
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Desktop-only: active card's full name + a contextual Play/Discard/Cancel
+                  popover once one is actually selected (not just hovered). Mobile keeps
+                  using the bottom action bar below for these same actions. */}
+              {(() => {
+                const activeCard = myPlayer!.hand.find(c => c.id === (selectedCardId ?? hoveredCardId));
+                if (!activeCard) return null;
+                return (
+                  <div className="hidden sm:flex sm:flex-col sm:items-center sm:gap-3 sm:mt-4">
+                    <p className="font-display text-amber-400 text-lg tracking-wide">{cardFullName(activeCard)}</p>
+                    {selectedCardId === activeCard.id && canAct && (
+                      <div className="flex flex-col items-center gap-2">
+                        <button
+                          onClick={playToTable}
+                          className="w-44 bg-blue-600 hover:bg-blue-500 text-white font-display text-lg py-2.5 rounded-xl shadow-lg transition-colors"
+                        >
+                          Play to Table
+                        </button>
+                        <div className="flex gap-4">
+                          <button onClick={discardSelected} className="text-xs text-red-400 hover:text-red-300 font-semibold px-2 py-1">
+                            Discard
+                          </button>
+                          <button onClick={() => setSelectedCardId(null)} className="text-xs text-white/40 hover:text-white px-2 py-1">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </>
           )
         ) : (
           <p className="text-white/30 text-sm py-3">No cards in hand</p>
         )}
       </div>
 
+      {/* Golf: big Knock! button, desktop-only, sitting to the right of the grid and
+          vertically centered against it (sm:self-center within the row). */}
+      {game?.isGolfLike && canAct && !golfPendingDraw && !room?.golf_knocked_by && !golfRevealed && (
+        <button
+          onClick={golfKnock}
+          className="hidden sm:block sm:order-2 sm:self-center bg-amber-500 hover:bg-amber-400 text-white font-display text-3xl tracking-wide px-10 py-4 rounded-2xl shadow-lg transition-colors"
+        >
+          Knock!
+        </button>
+      )}
+
       {/* Action bar */}
-      <div className="px-4 py-3 bg-black/30 border-t border-white/10 safe-bottom sm:bg-transparent sm:border-t-0 sm:px-0 sm:py-0 sm:w-full sm:max-w-sm sm:mx-auto">
+      <div className={`px-4 py-3 bg-black/30 border-t border-white/10 safe-bottom sm:bg-transparent sm:border-t-0 sm:px-0 sm:py-0 sm:w-full sm:max-w-sm sm:mx-auto
+        ${game?.isGolfLike ? 'sm:order-3 sm:basis-full' : ''}`}>
         {game?.showBlackjackControls ? (
           !myPlayer?.is_standing ? (
             // Blackjack controls
@@ -1052,10 +1206,11 @@ export function Game() {
             ) : canAct ? (
               <div className="flex gap-2 items-center">
                 <p className="flex-1 text-white/40 text-xs">Tap the draw or discard pile to draw a card</p>
+                {/* Desktop uses the big Knock! button beside the grid instead (see below). */}
                 {!room?.golf_knocked_by && (
                   <button
                     onClick={golfKnock}
-                    className="shrink-0 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold px-4 py-2 rounded text-sm transition-colors"
+                    className="shrink-0 sm:hidden bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold px-4 py-2 rounded text-sm transition-colors"
                   >
                     Knock
                   </button>
@@ -1064,8 +1219,9 @@ export function Game() {
             ) : null}
           </>
         ) : (
-          // Default controls
-          <div className="flex gap-2">
+          // Default controls — desktop uses the floating Play/Discard popover under the
+          // selected card instead (see the hand render above), so this bar is mobile-only.
+          <div className="flex gap-2 sm:hidden">
             <button
               onClick={selectedCard && canAct ? playToTable : undefined}
               disabled={!selectedCard || !canAct}
@@ -1087,11 +1243,25 @@ export function Game() {
           <p className="text-white/30 text-xs text-center mt-2">Wait for your turn…</p>
         )}
         {!selectedCard && canAct && !game?.showBlackjackControls && !game?.isGoFishLike && !game?.isGolfLike && (
-          <p className="text-white/30 text-xs text-center mt-2">Tap a card to select it</p>
+          <p className="text-white/30 text-xs text-center mt-2 sm:hidden">Tap a card to select it</p>
         )}
+      </div>
       </div>
 
       </div>
+
+      {/* Action History — desktop-only right sidebar (mobile gets the banner above) */}
+      {(room?.action_log?.length ?? 0) > 0 && (
+        <div className="hidden sm:block sm:w-[260px] sm:shrink-0 sm:self-start bg-black/20 border border-white/10 rounded-xl px-4 py-3 max-h-[420px] overflow-y-auto">
+          <p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-2">Action History</p>
+          <div className="flex flex-col gap-1.5">
+            {room!.action_log.map((entry, i) => (
+              <p key={i} className="text-white/60 text-xs">{entry}</p>
+            ))}
+          </div>
+        </div>
+      )}
+
       </div>
 
       {/* Go Fish: Ask dialog */}
