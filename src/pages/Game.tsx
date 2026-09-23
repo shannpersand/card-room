@@ -902,13 +902,13 @@ export function Game() {
           Deck beside the 2x2 grid rather than above it, matching the Figma "Game desktop
           Golf" frames — via flex-wrap + order rather than restructuring the DOM, so mobile
           (which stays stacked, unchanged) shares the exact same markup. */}
-      <div className={`flex-1 flex flex-col sm:items-center sm:justify-center sm:gap-4 sm:max-w-2xl sm:mx-auto sm:w-full sm:min-h-0
-        ${game?.isGolfLike ? 'sm:flex-row sm:flex-wrap sm:items-start sm:max-w-4xl' : ''}`}>
+      <div className={`flex-1 flex flex-col sm:justify-center sm:gap-4 sm:mx-auto sm:w-full sm:min-h-0
+        ${game?.isGolfLike ? 'sm:flex-row sm:flex-wrap sm:items-start sm:max-w-4xl' : 'sm:items-center sm:max-w-2xl'}`}>
 
       {/* Deck + Table, side by side on desktop (matches the Figma "Game Desktop" body),
           stacked on mobile */}
-      <div className={`flex-1 px-4 py-2 sm:flex-none sm:px-0 sm:py-0 sm:w-full sm:flex sm:gap-16 sm:justify-center sm:items-start
-        ${game?.isGolfLike ? 'sm:order-1 sm:w-auto' : ''}`}>
+      <div className={`flex-1 px-4 py-2 sm:flex-none sm:px-0 sm:py-0 sm:flex sm:gap-16 sm:justify-center sm:items-start
+        ${game?.isGolfLike ? 'sm:order-1 sm:w-auto' : 'sm:w-full'}`}>
         {/* Deck group: draw + discard piles */}
         <div className="mb-4 sm:mb-0">
           <p className="font-display text-app-label text-sm tracking-wide mb-2 sm:text-center">Deck</p>
@@ -987,8 +987,8 @@ export function Game() {
           children go back to being normal flex items in the centered column. */}
       <div className="fixed inset-x-0 bottom-0 z-10 bg-app-bg safe-bottom sm:static sm:contents">
       {/* Your hand */}
-      <div className={`border-t border-white/10 bg-black/20 px-4 pt-3 pb-2 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0 sm:w-full
-        ${game?.isGolfLike ? 'sm:order-2 sm:w-auto sm:flex sm:flex-col sm:items-center' : ''}`}>
+      <div className={`border-t border-white/10 bg-black/20 px-4 pt-3 pb-2 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0
+        ${game?.isGolfLike ? 'sm:order-2 sm:w-auto sm:flex sm:flex-col sm:items-center' : 'sm:w-full'}`}>
         {/* Desktop status headline for Golf, matching the amber Ohno Blazeface caption in
             the Figma "Game desktop Golf" frames. Mobile keeps the small muted header. */}
         {game?.isGolfLike && (

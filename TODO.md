@@ -51,6 +51,13 @@ Priority: P1 = most important, P2 = next, P3 = nice-to-have / later.
       looking fine in earlier screenshots. Switched to `position: fixed` on mobile,
       which always renders at the true viewport bottom regardless of scroll
       position, plus reserved bottom padding so it doesn't overlap the grid.
+- [x] Fixed Golf's desktop layout randomly rendering vertical (stacked) instead of
+      Deck-beside-grid: several of the golf-conditional classes were concatenated
+      alongside a conflicting same-breakpoint utility for the same CSS property
+      (`sm:items-center` + `sm:items-start`, `sm:max-w-2xl` + `sm:max-w-4xl`,
+      `sm:w-full` + `sm:w-auto`) — which one wins is decided by Tailwind's internal
+      generation order, not by position in the className string, so it could go
+      either way. Rewrote each as a clean either/or so only one is ever present.
 - [x] Landing page rebuilt from Figma ("Swank" frame), themed Button component,
       Lobby/Game color tokens.
 - [x] Adobe Fonts (Typekit) wired in; 4-theme system (Swank/Goof/Heist/Oki Toki)
